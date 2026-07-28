@@ -80,7 +80,7 @@ async def bulk_upload_document(
                 headers={
                     "Authorization": f"Bearer {monitoring_token}",
                     "authorization-scope": _BULK_UPLOAD_SCOPE,
-                    "X-Requested-With": "Idea",
+                    "X-Requested-With": "Python",
                 },
                 files={
                     "file": (

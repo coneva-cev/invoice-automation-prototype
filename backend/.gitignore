@@ -2,3 +2,7 @@
 __pycache__
 *.pyc
 .DS_Store
+.pytest_cache/
+
+# Generated OpenAPI spec — regenerated from FastAPI on boot, don't commit
+openapi.json
