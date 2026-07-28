@@ -66,7 +66,7 @@ async function downloadBundle() {
         Portal.
       </p>
       <div class="flex items-center gap-3">
-        <Button variant="outline" :disabled="downloading" @click="downloadBundle">
+        <Button variant="secondary" :disabled="downloading" @click="downloadBundle">
           <Spinner v-if="downloading" class="mr-2 h-4 w-4" />
           {{ downloading ? 'Preparing…' : 'Download PDF bundle (.zip)' }}
         </Button>

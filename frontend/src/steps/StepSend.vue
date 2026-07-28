@@ -325,7 +325,7 @@ onMounted(() => {
             <input v-model="editSubject" class="mt-1 w-full rounded-md border px-2 py-1" />
           </label>
           <div class="flex gap-2">
-            <Button @click="saveEdit">Save</Button>
+            <Button variant="secondary" @click="saveEdit">Save</Button>
             <Button variant="outline" @click="editing = false">Cancel</Button>
           </div>
         </div>

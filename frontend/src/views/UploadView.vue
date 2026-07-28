@@ -74,6 +74,20 @@ function goBack() {
   if (idx > 0) step.value = STEPS[idx - 1].id;
 }
 
+// A step is reachable once a result exists (steps after upload need it).
+// You can always go to steps at or before the current one; forward jumps
+// require a result to be present.
+function canVisit(i: number): boolean {
+  if (i === 0) return true;
+  if (!result.value) return false;
+  return true;
+}
+
+function goToStep(i: number) {
+  if (!canVisit(i)) return;
+  step.value = STEPS[i].id;
+}
+
 const nextLabel = computed(() => {
   if (step.value === 'upload') return 'Continue to validation';
   if (step.value === 'validation') return 'Continue to Portal upload';
@@ -97,32 +111,44 @@ const nextDisabled = computed(() => {
       </p>
     </header>
 
-    <!-- Stepper -->
+    <!-- Stepper (clickable breadcrumb) -->
     <ol class="flex items-center gap-2 text-sm">
       <li
         v-for="(s, i) in STEPS"
         :key="s.id"
         class="flex items-center gap-2"
       >
-        <span
-          class="flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium"
+        <button
+          type="button"
+          class="flex items-center gap-2"
           :class="
-            i <= stepIndex
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-muted text-muted-foreground'
+            canVisit(i)
+              ? 'cursor-pointer'
+              : 'cursor-not-allowed opacity-60'
           "
+          :disabled="!canVisit(i)"
+          @click="goToStep(i)"
         >
-          {{ i + 1 }}
-        </span>
-        <span
-          :class="
-            i === stepIndex
-              ? 'font-medium text-foreground'
-              : 'text-muted-foreground'
-          "
-        >
-          {{ s.label }}
-        </span>
+          <span
+            class="flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium"
+            :class="
+              i <= stepIndex
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted text-muted-foreground'
+            "
+          >
+            {{ i + 1 }}
+          </span>
+          <span
+            :class="
+              i === stepIndex
+                ? 'font-medium text-foreground'
+                : 'text-muted-foreground'
+            "
+          >
+            {{ s.label }}
+          </span>
+        </button>
         <span
           v-if="i < STEPS.length - 1"
           class="mx-2 h-px w-8 bg-border"
@@ -131,21 +157,8 @@ const nextDisabled = computed(() => {
       </li>
     </ol>
 
-    <!-- Active step -->
-    <StepUpload
-      v-if="step === 'upload'"
-      v-model:pdf-files="pdfFiles"
-      v-model:mapping-file="mappingFile"
-    />
-    <StepValidation
-      v-else-if="step === 'validation' && result"
-      :result="result"
-    />
-    <StepPortal v-else-if="step === 'portal' && result" :result="result" />
-    <StepSend v-else-if="step === 'send' && result" :result="result" />
-
-    <!-- Navigation -->
-    <div class="flex items-center gap-3 border-t pt-4">
+    <!-- Navigation (on top) -->
+    <div class="flex items-center gap-3 border-b pb-4">
       <Button
         v-if="stepIndex > 0"
         variant="outline"
@@ -160,5 +173,18 @@ const nextDisabled = computed(() => {
       </Button>
       <span v-if="error" class="text-sm text-destructive">{{ error }}</span>
     </div>
+
+    <!-- Active step -->
+    <StepUpload
+      v-if="step === 'upload'"
+      v-model:pdf-files="pdfFiles"
+      v-model:mapping-file="mappingFile"
+    />
+    <StepValidation
+      v-else-if="step === 'validation' && result"
+      :result="result"
+    />
+    <StepPortal v-else-if="step === 'portal' && result" :result="result" />
+    <StepSend v-else-if="step === 'send' && result" :result="result" />
   </div>
 </template>
