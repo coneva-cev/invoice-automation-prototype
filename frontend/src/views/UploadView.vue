@@ -4,6 +4,7 @@ import { Button } from '@coneva-cev/storybook';
 import { Spinner } from '@coneva-cev/storybook/spinner';
 import StepUpload from '../steps/StepUpload.vue';
 import StepValidation from '../steps/StepValidation.vue';
+import StepPortal from '../steps/StepPortal.vue';
 import StepSend from '../steps/StepSend.vue';
 import { useApi } from '../composables/useApi';
 import type { ProcessResponse, StepId } from '../types';
@@ -13,7 +14,8 @@ const { apiFetch } = useApi();
 const STEPS: { id: StepId; label: string }[] = [
   { id: 'upload', label: 'Upload' },
   { id: 'validation', label: 'Validation' },
-  { id: 'send', label: 'Send' },
+  { id: 'portal', label: 'Upload to Portal' },
+  { id: 'send', label: 'Send emails' },
 ];
 
 const step = ref<StepId>('upload');
@@ -61,6 +63,8 @@ async function goNext() {
     const ok = await process();
     if (ok) step.value = 'validation';
   } else if (step.value === 'validation') {
+    step.value = 'portal';
+  } else if (step.value === 'portal') {
     step.value = 'send';
   }
 }
@@ -72,7 +76,8 @@ function goBack() {
 
 const nextLabel = computed(() => {
   if (step.value === 'upload') return 'Continue to validation';
-  if (step.value === 'validation') return 'Continue to send';
+  if (step.value === 'validation') return 'Continue to Portal upload';
+  if (step.value === 'portal') return 'Continue to send emails';
   return '';
 });
 const showNext = computed(() => step.value !== 'send');
@@ -136,6 +141,7 @@ const nextDisabled = computed(() => {
       v-else-if="step === 'validation' && result"
       :result="result"
     />
+    <StepPortal v-else-if="step === 'portal' && result" :result="result" />
     <StepSend v-else-if="step === 'send' && result" :result="result" />
 
     <!-- Navigation -->

@@ -59,4 +59,4 @@ export interface ProcessResponse {
   orphan_recipients: OrphanRecipient[];
 }
 
-export type StepId = 'upload' | 'validation' | 'send';
+export type StepId = 'upload' | 'validation' | 'portal' | 'send';
