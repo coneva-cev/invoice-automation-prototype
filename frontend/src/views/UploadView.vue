@@ -5,7 +5,10 @@ import { Spinner } from '@coneva-cev/storybook/spinner';
 import StepUpload from '../steps/StepUpload.vue';
 import StepValidation from '../steps/StepValidation.vue';
 import StepSend from '../steps/StepSend.vue';
+import { useApi } from '../composables/useApi';
 import type { ProcessResponse, StepId } from '../types';
+
+const { apiFetch } = useApi();
 
 const STEPS: { id: StepId; label: string }[] = [
   { id: 'upload', label: 'Upload' },
@@ -34,7 +37,7 @@ async function process(): Promise<boolean> {
     const fd = new FormData();
     for (const f of pdfFiles.value) fd.append('files', f);
     fd.append('mapping_file', mappingFile.value as File);
-    const res = await fetch('/api/upload/process', {
+    const res = await apiFetch('/api/upload/process', {
       method: 'POST',
       body: fd,
     });

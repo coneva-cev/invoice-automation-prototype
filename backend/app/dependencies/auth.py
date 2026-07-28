@@ -40,6 +40,13 @@ _ALGORITHMS = ["RS256"]
 
 _bearer = HTTPBearer(auto_error=True)
 
+# Custom Auth0 roles claim + roles that are granted full access regardless of
+# the fine-grained `permissions` claim. Temporary: lets internal Coneva roles
+# (which don't yet carry API `permissions`) use the app. Tighten later once
+# RBAC "Add Permissions in the Access Token" is enabled on the API.
+_ROLES_CLAIM = "coneva/roles"
+_FULL_ACCESS_ROLES = {"MDM Admin"}
+
 
 # ---------------------------------------------------------------------------
 # JWKS fetching with a simple in-process cache
@@ -130,16 +137,24 @@ def require_permission(permission: str):
     The dependency resolves to the decoded JWT payload so callers can inspect
     claims (e.g. ``sub``) if needed.
 
+    Access is granted when the token either carries the required permission in
+    its ``permissions`` claim, or holds one of the full-access roles in the
+    custom ``coneva/roles`` claim (temporary bridge for internal Coneva roles).
+
     Raises:
         HTTP 401 — token missing, malformed, expired, or signature invalid.
-        HTTP 403 — token valid but the required permission is absent.
+        HTTP 403 — token valid but neither the permission nor a full-access
+            role is present.
     """
 
     def _dependency(
         payload: Annotated[dict, Depends(get_verified_payload)],
     ) -> dict:
         permissions: list[str] = payload.get("permissions", [])
-        if permission not in permissions:
+        roles: list[str] = payload.get(_ROLES_CLAIM, [])
+        has_permission = permission in permissions
+        has_full_access_role = any(r in _FULL_ACCESS_ROLES for r in roles)
+        if not (has_permission or has_full_access_role):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission '{permission}' required.",
