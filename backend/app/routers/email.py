@@ -33,7 +33,7 @@ from ..email import (
 from ..email.config import resolve_email_config
 from ..email.template import render_email
 from ..storage import get_store
-from app.dependencies.auth import require_permission
+from app.dependencies.auth import require_admin
 
 router = APIRouter(tags=["email"], prefix="/email")
 _log = logging.getLogger("app.email")
@@ -54,7 +54,7 @@ def _persist(batch_id: str, drafts: list[EmailDraft]) -> None:
 
 @router.get("/mode")
 def email_mode(
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> dict:
     """Report the active send mode so the UI can show it before sending."""
     cfg = resolve_email_config()
@@ -71,7 +71,7 @@ def email_mode(
 @router.post("/batch/{batch_id}/drafts")
 def generate_drafts(
     batch_id: str,
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> dict:
     """(Re)generate email drafts for a processed batch and persist them."""
     store = get_store()
@@ -97,7 +97,7 @@ def generate_drafts(
 @router.get("/batch/{batch_id}/drafts")
 def list_drafts(
     batch_id: str,
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> dict:
     drafts = _load_drafts(batch_id)
     return {
@@ -118,7 +118,7 @@ def _find(drafts: list[EmailDraft], draft_id: str) -> EmailDraft:
 def preview_draft(
     batch_id: str,
     draft_id: str,
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> HTMLResponse:
     """Return the rendered HTML body for an iframe preview."""
     draft = _find(_load_drafts(batch_id), draft_id)
@@ -130,7 +130,7 @@ def preview_attachment(
     batch_id: str,
     draft_id: str,
     doc_id: str,
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> FileResponse:
     """Return an attached PDF inline for preview."""
     draft = _find(_load_drafts(batch_id), draft_id)
@@ -154,7 +154,7 @@ def patch_draft(
     batch_id: str,
     draft_id: str,
     patch: DraftPatch,
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> dict:
     """Edit a draft's recipients / subject. Body stays fixed (re-rendered)."""
     drafts = _load_drafts(batch_id)
@@ -186,7 +186,7 @@ def patch_draft(
 @router.post("/batch/{batch_id}/drafts/send")
 def send_drafts(
     batch_id: str,
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> dict:
     """Send all sendable drafts via the configured backend."""
     drafts = _load_drafts(batch_id)

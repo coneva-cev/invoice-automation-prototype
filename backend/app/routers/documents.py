@@ -7,7 +7,7 @@ so the monitoring API can enforce its own RBAC independently.
 
 Pattern for future monitoring API routes
 -----------------------------------------
-1. Add ``_: dict = Depends(require_permission("admin"))`` to validate the
+1. Add ``_: dict = Depends(require_admin)`` to validate the
    user's invoice-automation token.
 2. Add ``raw_token: str = Depends(get_raw_token)`` to get the raw Bearer
    string for exchange.
@@ -26,7 +26,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
 
-from app.dependencies.auth import get_raw_token, require_permission
+from app.dependencies.auth import get_raw_token, require_admin
 from app.services.token_exchange import get_monitoring_token
 
 router = APIRouter(tags=["documents"])
@@ -42,7 +42,7 @@ _BULK_UPLOAD_SCOPE = os.environ["MONITORING_API_BULK_UPLOAD_SCOPE"]
 async def bulk_upload_document(
     file: UploadFile = File(...),
     send_email_notification: bool = False,
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
     raw_token: str = Depends(get_raw_token),
 ) -> Response:
     """Upload a document to the monitoring API's bulk-upload endpoint.

@@ -24,5 +24,9 @@ test-files/
 !.env.staging
 !.env.production
 
+# Allow committed example env files (real .env / .env.local stay ignored)
+!.env.example
+!**/.env.example
+
 # OS
 .DS_Store

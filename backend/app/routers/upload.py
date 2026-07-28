@@ -18,7 +18,7 @@ from ..bundling import BundleFile, build_pdf_bundle
 from ..classification import Category, ClassifiedDocument, classify_pdf
 from ..mapping import load_mapping, resolve_recipient
 from ..storage import get_store
-from app.dependencies.auth import require_permission
+from app.dependencies.auth import require_admin
 
 router = APIRouter(tags=["upload"])
 
@@ -63,7 +63,7 @@ def _summary(documents: list[ClassifiedDocument]) -> dict:
 @router.post("/upload/classify")
 async def classify_uploads(
     files: list[UploadFile] = File(...),
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> dict:
     """Classify uploaded PDFs and return internal document objects + summary."""
     if not files:
@@ -80,7 +80,7 @@ async def classify_uploads(
 async def process_uploads(
     files: list[UploadFile] = File(...),
     mapping_file: UploadFile = File(...),
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> dict:
     """Classify PDFs, resolve recipients from the mapping xlsx, group per email.
 
@@ -206,7 +206,7 @@ async def process_uploads(
 def get_stored_document(
     batch_id: str,
     doc_id: str,
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> FileResponse:
     """Return a stored PDF by id (for SendGrid attachments / inspection)."""
     store = get_store()
@@ -222,7 +222,7 @@ def get_stored_document(
 @router.get("/upload/batch/{batch_id}/bundle")
 def bundle_stored_batch(
     batch_id: str,
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> Response:
     """Zip all stored PDFs of a batch (the Portal bulk-upload artifact)."""
     store = get_store()
@@ -249,7 +249,7 @@ def bundle_stored_batch(
 @router.delete("/upload/batch/{batch_id}")
 def delete_batch(
     batch_id: str,
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> dict:
     """Delete a batch's stored PDFs. Call when the flow completes."""
     store = get_store()
@@ -265,7 +265,7 @@ def delete_batch(
 @router.post("/upload/bundle")
 async def bundle_uploads(
     files: list[UploadFile] = File(...),
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> Response:
     """Zip all uploaded PDFs into one flat archive for the Portal bulk upload.
 

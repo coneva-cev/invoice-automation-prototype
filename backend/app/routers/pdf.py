@@ -14,7 +14,7 @@ from fastapi.responses import Response
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import BaseModel
 
-from app.dependencies.auth import require_permission
+from app.dependencies.auth import require_admin
 
 router = APIRouter(tags=["pdf"])
 
@@ -45,7 +45,7 @@ class InvoiceRequest(BaseModel):
 @router.post("/pdf/invoice")
 def generate_invoice_pdf(
     payload: InvoiceRequest,
-    _: dict = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ) -> Response:
     """Render an invoice PDF from the given data and return it as a download."""
     # Imported lazily so the app can still boot for non-PDF endpoints even if
