@@ -1,23 +1,27 @@
 """Auth0 JWT verification for FastAPI.
 
-Provides a `require_permission` factory that returns a FastAPI dependency
-which validates the incoming Bearer token against Auth0 and checks that the
-token carries the requested permission in its `permissions` claim (populated
-by Auth0 RBAC when "Add Permissions in the Access Token" is enabled on the API).
+Validates the incoming Bearer token against Auth0 and enforces that the token
+carries the required API permission in its ``permissions`` claim (populated by
+Auth0 RBAC when "Add Permissions in the Access Token" is enabled on the API).
+
+The permission that gates the whole application is configured in **one place**
+— the ``REQUIRED_PERMISSION`` environment variable (see ``app/.env``) — and is
+enforced everywhere via the ``require_admin`` dependency. Routes never hardcode
+the permission name.
 
 Usage
 -----
-from app.dependencies.auth import require_permission
+from app.dependencies.auth import require_admin
 
 @router.post("/excel/parse")
 async def parse_excel(
     file: UploadFile = File(...),
-    _: str = Depends(require_permission("admin")),
+    _: dict = Depends(require_admin),
 ):
     ...
 
-Adding more permissions later (e.g. "read-only") is a one-liner — just pass
-the desired permission string to `require_permission`.
+For additional, finer-grained permissions in the future (e.g. "read-only"),
+use the generic ``require_permission("read-only")`` factory.
 """
 
 from __future__ import annotations
@@ -40,12 +44,10 @@ _ALGORITHMS = ["RS256"]
 
 _bearer = HTTPBearer(auto_error=True)
 
-# Custom Auth0 roles claim + roles that are granted full access regardless of
-# the fine-grained `permissions` claim. Temporary: lets internal Coneva roles
-# (which don't yet carry API `permissions`) use the app. Tighten later once
-# RBAC "Add Permissions in the Access Token" is enabled on the API.
-_ROLES_CLAIM = "coneva/roles"
-_FULL_ACCESS_ROLES = {"MDM Admin"}
+# Single source of truth for the permission required to use the application.
+# Configured centrally via the REQUIRED_PERMISSION env var (app/.env) so the
+# permission name is never scattered across route definitions.
+REQUIRED_PERMISSION = os.environ.get("REQUIRED_PERMISSION", "admin")
 
 
 # ---------------------------------------------------------------------------
@@ -137,24 +139,16 @@ def require_permission(permission: str):
     The dependency resolves to the decoded JWT payload so callers can inspect
     claims (e.g. ``sub``) if needed.
 
-    Access is granted when the token either carries the required permission in
-    its ``permissions`` claim, or holds one of the full-access roles in the
-    custom ``coneva/roles`` claim (temporary bridge for internal Coneva roles).
-
     Raises:
         HTTP 401 — token missing, malformed, expired, or signature invalid.
-        HTTP 403 — token valid but neither the permission nor a full-access
-            role is present.
+        HTTP 403 — token valid but the required permission is absent.
     """
 
     def _dependency(
         payload: Annotated[dict, Depends(get_verified_payload)],
     ) -> dict:
         permissions: list[str] = payload.get("permissions", [])
-        roles: list[str] = payload.get(_ROLES_CLAIM, [])
-        has_permission = permission in permissions
-        has_full_access_role = any(r in _FULL_ACCESS_ROLES for r in roles)
-        if not (has_permission or has_full_access_role):
+        if permission not in permissions:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission '{permission}' required.",
@@ -165,6 +159,28 @@ def require_permission(permission: str):
     return _dependency
 
 
+def require_admin(
+    payload: Annotated[dict, Depends(get_verified_payload)],
+) -> dict:
+    """FastAPI dependency enforcing the application's required permission.
+
+    This is the single guard used by every protected route. The permission it
+    checks is configured centrally via ``REQUIRED_PERMISSION`` — routes depend
+    on ``require_admin`` and never name the permission themselves.
+
+    Raises:
+        HTTP 401 — token missing, malformed, expired, or signature invalid.
+        HTTP 403 — token valid but the required permission is absent.
+    """
+    permissions: list[str] = payload.get("permissions", [])
+    if REQUIRED_PERMISSION not in permissions:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission '{REQUIRED_PERMISSION}' required.",
+        )
+    return payload
+
+
 def get_raw_token(
     credentials: Annotated[HTTPAuthorizationCredentials, Security(_bearer)],
 ) -> str:
@@ -172,11 +188,11 @@ def get_raw_token(
 
     Use this in routes that need to forward or exchange the user's token for
     a downstream API call (e.g. via ``token_exchange.get_monitoring_token``).
-    Combine with ``require_permission`` to ensure the token is validated first:
+    Combine with ``require_admin`` to ensure the token is validated first:
 
         @router.post("/some-endpoint")
         async def handler(
-            _: dict = Depends(require_permission("admin")),
+            _: dict = Depends(require_admin),
             raw_token: str = Depends(get_raw_token),
         ):
             monitoring_token = await get_monitoring_token(raw_token)
