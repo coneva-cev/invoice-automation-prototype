@@ -16,6 +16,11 @@ app.use(
       redirect_uri: window.location.origin,
       audience: import.meta.env.VITE_AUTH0_AUDIENCE,
     },
+    // Persist tokens across page refreshes (default is in-memory, which loses
+    // the session on every reload) and enable silent refresh via refresh tokens
+    // so short-lived access tokens are renewed without a full login redirect.
+    cacheLocation: 'localstorage',
+    useRefreshTokens: true,
   }),
 );
 
