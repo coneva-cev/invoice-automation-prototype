@@ -137,3 +137,23 @@ def require_permission(permission: str):
         return payload
 
     return _dependency
+
+
+def get_raw_token(
+    credentials: Annotated[HTTPAuthorizationCredentials, Security(_bearer)],
+) -> str:
+    """Return the raw Bearer token string from the Authorization header.
+
+    Use this in routes that need to forward or exchange the user's token for
+    a downstream API call (e.g. via ``token_exchange.get_monitoring_token``).
+    Combine with ``require_permission`` to ensure the token is validated first:
+
+        @router.post("/some-endpoint")
+        async def handler(
+            _: dict = Depends(require_permission("admin")),
+            raw_token: str = Depends(get_raw_token),
+        ):
+            monitoring_token = await get_monitoring_token(raw_token)
+            ...
+    """
+    return credentials.credentials

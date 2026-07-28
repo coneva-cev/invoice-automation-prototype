@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # Load Auth0 config from app/.env before any module that reads os.environ
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-from .routers import excel, pdf
+from .routers import documents, excel, pdf
 
 app = FastAPI(
     title="Invoice Automation API",
@@ -49,3 +49,4 @@ def health() -> dict[str, str]:
 
 app.include_router(excel.router, prefix="/api")
 app.include_router(pdf.router, prefix="/api")
+app.include_router(documents.router, prefix="/api")
