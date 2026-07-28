@@ -1,0 +1,6 @@
+@import 'tailwindcss';
+@import '@coneva-cev/storybook/theme.css';
+
+/* Ensure the Coneva component source is scanned for Tailwind classes so
+   utilities used inside the library are generated. */
+@source '../node_modules/@coneva-cev/storybook/dist';
