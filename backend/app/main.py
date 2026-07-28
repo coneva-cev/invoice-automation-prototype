@@ -13,7 +13,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import excel, pdf
+from .routers import excel, pdf, upload
 
 app = FastAPI(
     title="Invoice Automation API",
@@ -43,3 +43,4 @@ def health() -> dict[str, str]:
 
 app.include_router(excel.router, prefix="/api")
 app.include_router(pdf.router, prefix="/api")
+app.include_router(upload.router, prefix="/api")

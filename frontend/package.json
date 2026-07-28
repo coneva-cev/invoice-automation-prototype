@@ -16,6 +16,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",
     "@tanstack/vue-table": "^8.21.3",
+    "@types/node": "^26.1.2",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/tsconfig": "^0.9.1",
     "tailwindcss": "^4.3.0",

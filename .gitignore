@@ -11,6 +11,9 @@ dist/
 __pycache__/
 *.pyc
 
+# Sample data — real customer PDFs / billing spreadsheets, never commit
+backend/samples/
+
 # Env / secrets — never commit the GitHub Packages token
 .env
 .env.*
