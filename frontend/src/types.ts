@@ -60,3 +60,41 @@ export interface ProcessResponse {
 }
 
 export type StepId = 'upload' | 'validation' | 'portal' | 'send';
+
+export interface DraftAttachment {
+  doc_id: string;
+  filename: string;
+  category: string;
+  subtype: string | null;
+}
+
+export interface EmailDraft {
+  draft_id: string;
+  batch_id: string;
+  category: string;
+  unternehmen: string | null;
+  to: string[];
+  cc: string[];
+  subject: string;
+  html: string;
+  attachments: DraftAttachment[];
+  status: 'READY' | 'BLOCKED' | 'SENT' | 'FAILED';
+  warnings: string[];
+  error: string | null;
+}
+
+export interface SendResultItem {
+  draft_id: string;
+  sent: boolean;
+  status: string;
+  detail: string | null;
+}
+
+export interface SendMode {
+  app_env: string;
+  backend: string;
+  sandbox: boolean;
+  delivers: boolean;
+  label: string;
+  real_send_blocked: boolean;
+}

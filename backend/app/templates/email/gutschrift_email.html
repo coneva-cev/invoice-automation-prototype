@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ subject }}</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;color:#18181b;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:24px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="background:#0f172a;padding:20px 32px;">
+                <span style="color:#ffffff;font-size:18px;font-weight:bold;">coneva</span>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px;">
+                <p style="margin:0 0 16px;font-size:15px;">
+                  Sehr geehrte Damen und Herren{% if unternehmen %} der {{ unternehmen }}{% endif %},
+                </p>
+                <p style="margin:0 0 16px;font-size:15px;line-height:1.5;">
+                  anbei erhalten Sie Ihre Gutschrift(en) gemäß Vertrag zur
+                  Stromvermarktung. Die folgenden Dokumente sind dieser E-Mail
+                  als PDF beigefügt:
+                </p>
+                <ul style="margin:0 0 16px;padding-left:20px;font-size:14px;line-height:1.6;">
+                  {% for doc in documents %}
+                  <li>{{ doc.filename }}</li>
+                  {% endfor %}
+                </ul>
+                {% if malos %}
+                <p style="margin:0 0 16px;font-size:13px;color:#52525b;">
+                  Betroffene Marktlokation(en): {{ malos | join(', ') }}
+                </p>
+                {% endif %}
+                <p style="margin:0 0 16px;font-size:15px;line-height:1.5;">
+                  Bei Rückfragen zu dieser Gutschrift stehen wir Ihnen gerne zur
+                  Verfügung.
+                </p>
+                <p style="margin:0;font-size:15px;">
+                  Mit freundlichen Grüßen<br />
+                  Ihr coneva Team
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td style="background:#f4f4f5;padding:16px 32px;font-size:11px;color:#a1a1aa;">
+                Diese E-Mail wurde automatisch erzeugt.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

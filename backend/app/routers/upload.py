@@ -181,7 +181,7 @@ async def process_uploads(
                 }
             )
 
-    return {
+    result = {
         "batch_id": batch_id,
         "total": len(documents),
         "summary": {
@@ -197,6 +197,9 @@ async def process_uploads(
         # Case 2: recipients present in mapping but with no PDF this batch.
         "orphan_recipients": orphan_recipients,
     }
+    # Persist so the email-draft step can rebuild drafts without re-uploading.
+    store.save_result(batch_id, result)
+    return result
 
 
 @router.get("/upload/batch/{batch_id}/document/{doc_id}")

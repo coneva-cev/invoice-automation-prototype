@@ -1,43 +1,351 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { Button } from '@coneva-cev/storybook';
 import { Badge } from '@coneva-cev/storybook/badge';
-import type { ProcessResponse } from '../types';
+import { Spinner } from '@coneva-cev/storybook/spinner';
+import { useApi } from '../composables/useApi';
+import type {
+  EmailDraft,
+  ProcessResponse,
+  SendMode,
+  SendResultItem,
+} from '../types';
 
 const props = defineProps<{ result: ProcessResponse }>();
 
-const sendableEmails = computed(
-  () => props.result.emails.filter((e) => e.matched).length,
+const { apiFetch } = useApi();
+
+const drafts = ref<EmailDraft[]>([]);
+const selectedId = ref<string | null>(null);
+const loading = ref(false);
+const error = ref<string | null>(null);
+
+const previewHtml = ref<string>('');
+const previewLoading = ref(false);
+
+const sending = ref(false);
+const sendResults = ref<SendResultItem[] | null>(null);
+const sendMode = ref<SendMode | null>(null);
+
+const base = computed(() => `/api/email/batch/${props.result.batch_id}`);
+
+const selected = computed(
+  () => drafts.value.find((d) => d.draft_id === selectedId.value) ?? null,
 );
-const blockedEmails = computed(
-  () => props.result.emails.filter((e) => !e.matched).length,
+const readyCount = computed(
+  () => drafts.value.filter((d) => d.status === 'READY').length,
 );
+const sentCount = computed(
+  () => drafts.value.filter((d) => d.status === 'SENT').length,
+);
+
+function statusVariant(s: string) {
+  if (s === 'READY') return 'default';
+  if (s === 'SENT') return 'secondary';
+  return 'destructive';
+}
+
+// Style the mode banner by how "live" the send is.
+const modeTone = computed(() => {
+  const m = sendMode.value;
+  if (!m) return '';
+  if (m.delivers && m.backend === 'sendgrid')
+    return 'border-destructive/50 bg-destructive/10 text-destructive';
+  return 'border-amber-500/40 bg-amber-50 text-amber-800';
+});
+function categoryVariant(c: string) {
+  if (c === 'INVOICE') return 'default';
+  if (c === 'GUTSCHRIFT') return 'secondary';
+  return 'destructive';
+}
+
+async function generate() {
+  loading.value = true;
+  error.value = null;
+  sendResults.value = null;
+  try {
+    const res = await apiFetch(`${base.value}/drafts`, { method: 'POST' });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.detail || `HTTP ${res.status}`);
+    }
+    drafts.value = (await res.json()).drafts as EmailDraft[];
+    selectedId.value = drafts.value[0]?.draft_id ?? null;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    loading.value = false;
+  }
+}
+
+// Fetch the rendered HTML via apiFetch (an <iframe src> can't send the
+// Authorization header) and inject it with srcdoc.
+async function loadPreview(draftId: string) {
+  previewLoading.value = true;
+  previewHtml.value = '';
+  try {
+    const res = await apiFetch(`${base.value}/drafts/${draftId}/preview`);
+    previewHtml.value = res.ok ? await res.text() : '';
+  } finally {
+    previewLoading.value = false;
+  }
+}
+
+watch(selectedId, (id) => {
+  if (id) loadPreview(id);
+});
+
+async function openAttachment(draftId: string, docId: string) {
+  const res = await apiFetch(
+    `${base.value}/drafts/${draftId}/attachment/${docId}`,
+  );
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+  // Revoke a bit later so the new tab has time to load it.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+// Inline recipient/subject editing.
+const editing = ref(false);
+const editTo = ref('');
+const editCc = ref('');
+const editSubject = ref('');
+
+function startEdit() {
+  if (!selected.value) return;
+  editTo.value = selected.value.to.join(', ');
+  editCc.value = selected.value.cc.join(', ');
+  editSubject.value = selected.value.subject;
+  editing.value = true;
+}
+function splitAddrs(v: string): string[] {
+  return v
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+async function saveEdit() {
+  if (!selected.value) return;
+  const draftId = selected.value.draft_id;
+  const res = await apiFetch(`${base.value}/drafts/${draftId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      to: splitAddrs(editTo.value),
+      cc: splitAddrs(editCc.value),
+      subject: editSubject.value,
+    }),
+  });
+  if (res.ok) {
+    const updated = (await res.json()) as EmailDraft;
+    const i = drafts.value.findIndex((d) => d.draft_id === draftId);
+    if (i >= 0) drafts.value[i] = updated;
+    editing.value = false;
+    loadPreview(draftId);
+  }
+}
+
+async function sendAll() {
+  sending.value = true;
+  error.value = null;
+  try {
+    const res = await apiFetch(`${base.value}/drafts/send`, { method: 'POST' });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.detail || `HTTP ${res.status}`);
+    }
+    const body = await res.json();
+    sendResults.value = body.results as SendResultItem[];
+    sendMode.value = (body.mode ?? null) as SendMode | null;
+    // Refresh statuses.
+    const listed = await apiFetch(`${base.value}/drafts`);
+    if (listed.ok) drafts.value = (await listed.json()).drafts as EmailDraft[];
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    sending.value = false;
+  }
+}
+
+onMounted(generate);
 </script>
 
 <template>
   <div class="space-y-6">
     <div>
-      <h2 class="text-lg font-semibold">4. Send emails</h2>
+      <h2 class="text-lg font-semibold">4. Review &amp; send emails</h2>
       <p class="text-muted-foreground text-sm">
-        Send one email per customer, bundling all their documents. Email
-        sending (SendGrid) is not wired up yet.
+        Drafts are generated automatically — one per customer and document
+        category. Review the body, recipients and attachments, then send.
       </p>
     </div>
 
-    <div class="flex flex-wrap gap-2">
-      <Badge variant="default">{{ sendableEmails }} ready to send</Badge>
-      <Badge :variant="blockedEmails ? 'destructive' : 'outline'">
-        {{ blockedEmails }} blocked (unmatched)
-      </Badge>
+    <div class="flex flex-wrap items-center gap-2">
+      <Badge variant="default">{{ readyCount }} ready</Badge>
+      <Badge variant="secondary">{{ sentCount }} sent</Badge>
+      <Badge variant="outline">{{ drafts.length }} drafts</Badge>
+      <Button
+        variant="outline"
+        class="ml-auto"
+        :disabled="loading"
+        @click="generate"
+      >
+        <Spinner v-if="loading" class="mr-2 h-4 w-4" />
+        Regenerate
+      </Button>
+      <Button :disabled="sending || readyCount === 0" @click="sendAll">
+        <Spinner v-if="sending" class="mr-2 h-4 w-4" />
+        {{ sending ? 'Sending…' : `Send ${readyCount} emails` }}
+      </Button>
     </div>
 
-    <section class="space-y-3 rounded-lg border p-4">
-      <h3 class="text-sm font-semibold">Send emails</h3>
-      <p class="text-xs text-muted-foreground">
-        One email per customer, bundling all their documents. Not implemented
-        yet — this is a placeholder for the SendGrid integration.
-      </p>
-      <Button disabled>Send {{ sendableEmails }} emails (coming soon)</Button>
-    </section>
+    <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
+
+    <div
+      v-if="sendResults"
+      class="flex flex-wrap items-center gap-3 rounded-md border bg-muted/30 p-3 text-sm"
+    >
+      <span>
+        Sent {{ sendResults.filter((r) => r.sent).length }} /
+        {{ sendResults.length }}.
+      </span>
+      <span v-if="sendResults.some((r) => !r.sent)" class="text-destructive">
+        Some failed — see draft statuses.
+      </span>
+      <a
+        v-if="sendMode && sendMode.backend === 'smtp'"
+        href="http://localhost:8025"
+        target="_blank"
+        rel="noopener"
+        class="ml-auto text-primary underline"
+      >
+        View captured emails in Mailpit ↗
+      </a>
+    </div>
+
+    <!-- Active send mode: always shown so it's clear what will happen. -->
+    <div
+      v-if="sendMode"
+      class="rounded-md border p-3 text-sm"
+      :class="modeTone"
+    >
+      <span class="font-medium">Send mode:</span> {{ sendMode.label }}
+      <span class="opacity-70">
+        (env: {{ sendMode.app_env }}, backend: {{ sendMode.backend }})
+      </span>
+      <span v-if="sendMode.real_send_blocked" class="block text-xs mt-1">
+        Real delivery was requested but blocked — set
+        <code>EMAIL_ALLOW_REAL_SEND=true</code> to actually deliver.
+      </span>
+      <span v-else-if="!sendMode.delivers" class="block text-xs mt-1 opacity-80">
+        No emails were delivered to real recipients in this mode.
+      </span>
+    </div>
+
+    <div v-if="loading" class="flex items-center gap-2 text-sm text-muted-foreground">
+      <Spinner class="h-4 w-4" /> Generating drafts…
+    </div>
+
+    <div v-else-if="drafts.length === 0" class="text-sm text-muted-foreground">
+      No sendable drafts (no matched recipients).
+    </div>
+
+    <div v-else class="grid gap-4 md:grid-cols-[280px_1fr]">
+      <!-- Draft list -->
+      <ul class="space-y-1 rounded-md border p-2">
+        <li v-for="d in drafts" :key="d.draft_id">
+          <button
+            class="w-full rounded-md p-2 text-left text-sm hover:bg-accent"
+            :class="d.draft_id === selectedId ? 'bg-accent' : ''"
+            @click="selectedId = d.draft_id"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <span class="truncate font-medium">
+                {{ d.unternehmen ?? '—' }}
+              </span>
+              <Badge :variant="statusVariant(d.status)" class="text-[10px]">
+                {{ d.status }}
+              </Badge>
+            </div>
+            <div class="mt-1 flex items-center gap-1">
+              <Badge :variant="categoryVariant(d.category)" class="text-[10px]">
+                {{ d.category }}
+              </Badge>
+              <span class="text-xs text-muted-foreground">
+                {{ d.attachments.length }} file(s)
+              </span>
+            </div>
+          </button>
+        </li>
+      </ul>
+
+      <!-- Preview pane -->
+      <div v-if="selected" class="space-y-3 rounded-md border p-4">
+        <!-- Recipients / subject -->
+        <div v-if="!editing" class="space-y-1 text-sm">
+          <div><span class="text-muted-foreground">To:</span> {{ selected.to.join(', ') || '—' }}</div>
+          <div><span class="text-muted-foreground">Cc:</span> {{ selected.cc.join(', ') || '—' }}</div>
+          <div><span class="text-muted-foreground">Subject:</span> {{ selected.subject }}</div>
+          <Button variant="outline" class="mt-1" @click="startEdit">Edit recipients / subject</Button>
+        </div>
+        <div v-else class="space-y-2 text-sm">
+          <label class="block">
+            <span class="text-xs text-muted-foreground">To (comma-separated)</span>
+            <input v-model="editTo" class="mt-1 w-full rounded-md border px-2 py-1" />
+          </label>
+          <label class="block">
+            <span class="text-xs text-muted-foreground">Cc</span>
+            <input v-model="editCc" class="mt-1 w-full rounded-md border px-2 py-1" />
+          </label>
+          <label class="block">
+            <span class="text-xs text-muted-foreground">Subject</span>
+            <input v-model="editSubject" class="mt-1 w-full rounded-md border px-2 py-1" />
+          </label>
+          <div class="flex gap-2">
+            <Button @click="saveEdit">Save</Button>
+            <Button variant="outline" @click="editing = false">Cancel</Button>
+          </div>
+        </div>
+
+        <!-- Attachments -->
+        <div class="flex flex-wrap gap-1">
+          <button
+            v-for="a in selected.attachments"
+            :key="a.doc_id"
+            class="rounded-md border px-2 py-1 text-xs hover:bg-accent"
+            @click="openAttachment(selected.draft_id, a.doc_id)"
+          >
+            📎 {{ a.filename }}
+          </button>
+        </div>
+
+        <!-- Warnings -->
+        <p
+          v-if="selected.warnings.length"
+          class="text-xs text-destructive"
+        >
+          {{ selected.warnings.join('; ') }}
+        </p>
+
+        <!-- HTML body preview -->
+        <div class="rounded-md border">
+          <div class="border-b bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+            Email body preview
+          </div>
+          <div v-if="previewLoading" class="p-4">
+            <Spinner class="h-4 w-4" />
+          </div>
+          <iframe
+            v-else
+            :srcdoc="previewHtml"
+            class="h-[480px] w-full"
+            sandbox=""
+            title="Email preview"
+          />
+        </div>
+      </div>
+    </div>
   </div>
 </template>

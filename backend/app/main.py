@@ -14,14 +14,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import os
+
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Load Auth0 config from app/.env before any module that reads os.environ
-load_dotenv(Path(__file__).resolve().parent / ".env")
+# Load config before any module that reads os.environ. Order (later wins for
+# already-set keys only where override=True): per-environment defaults from
+# .env.<APP_ENV>, then secret overrides from .env. Real secrets live in the
+# gitignored .env; the .env.<env> files hold non-secret defaults.
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_app_env = os.environ.get("APP_ENV", "local").strip().lower()
+load_dotenv(_BACKEND_DIR / f".env.{_app_env}")  # non-secret env defaults
+load_dotenv(_BACKEND_DIR / ".env", override=True)  # secrets + local overrides
 
-from .routers import documents, excel, pdf, upload
+from .routers import documents, email, excel, pdf, upload
 
 app = FastAPI(
     title="Invoice Automation API",
@@ -53,3 +61,4 @@ app.include_router(excel.router, prefix="/api")
 app.include_router(pdf.router, prefix="/api")
 app.include_router(upload.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
+app.include_router(email.router, prefix="/api")

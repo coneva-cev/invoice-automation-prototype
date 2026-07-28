@@ -86,6 +86,39 @@ class BatchStore:
     def batch_exists(self, batch_id: str) -> bool:
         return self._batch_dir(batch_id).exists()
 
+    # --- process result ---------------------------------------------------- #
+    def save_result(self, batch_id: str, result: dict) -> None:
+        """Persist the /process response so later steps can rebuild drafts."""
+        d = self._batch_dir(batch_id)
+        if not d.exists():
+            raise KeyError(f"Unknown batch {batch_id}")
+        (d / "result.json").write_text(json.dumps(result))
+
+    def load_result(self, batch_id: str) -> dict | None:
+        d = self._batch_dir(batch_id)
+        if not d.exists():
+            raise KeyError(f"Unknown batch {batch_id}")
+        p = d / "result.json"
+        return json.loads(p.read_text()) if p.exists() else None
+
+    # --- email drafts ------------------------------------------------------ #
+    def save_drafts(self, batch_id: str, drafts: list[dict]) -> None:
+        """Persist generated email drafts (list of dicts) for a batch."""
+        d = self._batch_dir(batch_id)
+        if not d.exists():
+            raise KeyError(f"Unknown batch {batch_id}")
+        (d / "drafts.json").write_text(json.dumps(drafts))
+
+    def load_drafts(self, batch_id: str) -> list[dict]:
+        """Load persisted drafts, or [] if none generated yet."""
+        d = self._batch_dir(batch_id)
+        if not d.exists():
+            raise KeyError(f"Unknown batch {batch_id}")
+        p = d / "drafts.json"
+        if p.exists():
+            return json.loads(p.read_text())
+        return []
+
     # --- helpers ----------------------------------------------------------- #
     def _index_path(self, batch_dir: Path) -> Path:
         return batch_dir / "index.json"

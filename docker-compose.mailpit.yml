@@ -1,0 +1,21 @@
+# Local mail catcher for integration testing the email-send flow.
+#
+#   docker compose -f docker-compose.mailpit.yml up -d
+#
+# SMTP:            localhost:1025  (point EMAIL_BACKEND=smtp / SMTP_PORT=1025 at it)
+# Web UI + API:    http://localhost:8025
+#
+# Nothing here is delivered to the internet — every message is captured by
+# Mailpit and inspectable in the UI / via its REST API (/api/v1/messages).
+services:
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: invoice-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI + REST API
+    environment:
+      MP_MAX_MESSAGES: "5000"
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"

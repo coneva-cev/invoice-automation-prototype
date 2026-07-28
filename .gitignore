@@ -19,6 +19,10 @@ test-files/
 .env
 .env.*
 *.token
+# ...but DO commit non-secret, per-environment templates (placeholders only).
+!.env.example
+!.env.staging
+!.env.production
 
 # OS
 .DS_Store
