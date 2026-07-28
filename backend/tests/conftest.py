@@ -31,11 +31,13 @@ _SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 @pytest.fixture(scope="session")
 def client() -> TestClient:
     # Bypass real Auth0 verification: pretend every request carries a valid
-    # token with the "admin" permission. Endpoint auth wiring is exercised
+    # token with the required admin role. Endpoint auth wiring is exercised
     # separately; these tests focus on business logic.
+    from app.dependencies.auth import REQUIRED_ROLE, ROLES_CLAIM
+
     app.dependency_overrides[get_verified_payload] = lambda: {
         "sub": "test|user",
-        "permissions": ["admin"],
+        ROLES_CLAIM: [REQUIRED_ROLE],
     }
     client = TestClient(app)
     yield client

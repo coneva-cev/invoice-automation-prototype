@@ -1,13 +1,15 @@
 """Auth0 JWT verification for FastAPI.
 
 Validates the incoming Bearer token against Auth0 and enforces that the token
-carries the required API permission in its ``permissions`` claim (populated by
-Auth0 RBAC when "Add Permissions in the Access Token" is enabled on the API).
+carries the required Auth0 **role** in its namespaced roles claim (e.g.
+``coneva/roles``). Gating on the role — rather than the API ``permissions``
+claim — matches the frontend (``useAuthz``) and avoids needing a custom Auth0
+Action to copy permissions into the token.
 
-The permission that gates the whole application is configured in **one place**
-— the ``REQUIRED_PERMISSION`` environment variable (see ``app/.env``) — and is
-enforced everywhere via the ``require_admin`` dependency. Routes never hardcode
-the permission name.
+The role that gates the whole application is configured in **one place** — the
+``REQUIRED_ROLE`` environment variable (see ``app/.env``), with the claim name
+in ``ROLES_CLAIM`` — and is enforced everywhere via the ``require_admin``
+dependency. Routes never hardcode the role name.
 
 Usage
 -----
@@ -48,6 +50,14 @@ _bearer = HTTPBearer(auto_error=True)
 # Configured centrally via the REQUIRED_PERMISSION env var (app/.env) so the
 # permission name is never scattered across route definitions.
 REQUIRED_PERMISSION = os.environ.get("REQUIRED_PERMISSION", "admin")
+
+# The app gates on an Auth0 **role** (surfaced in a namespaced ID/access-token
+# claim) rather than the API ``permissions`` claim, matching the frontend
+# (see ``frontend/src/composables/useAuthz.ts``). This avoids requiring a custom
+# Auth0 Action to copy ``permissions`` into the token. Both the role name and
+# the claim are configurable so nothing is hardcoded across routes.
+REQUIRED_ROLE = os.environ.get("REQUIRED_ROLE", "Invoice Automation Admin")
+ROLES_CLAIM = os.environ.get("ROLES_CLAIM", "coneva/roles")
 
 
 # ---------------------------------------------------------------------------
@@ -162,21 +172,24 @@ def require_permission(permission: str):
 def require_admin(
     payload: Annotated[dict, Depends(get_verified_payload)],
 ) -> dict:
-    """FastAPI dependency enforcing the application's required permission.
+    """FastAPI dependency enforcing the application's required role.
 
-    This is the single guard used by every protected route. The permission it
-    checks is configured centrally via ``REQUIRED_PERMISSION`` — routes depend
-    on ``require_admin`` and never name the permission themselves.
+    This is the single guard used by every protected route. It gates on the
+    Auth0 **role** carried in the ``ROLES_CLAIM`` claim (configured centrally
+    via ``REQUIRED_ROLE``), matching the frontend's authorization check so a
+    single Auth0 role grants access to both. Routes depend on ``require_admin``
+    and never name the role themselves.
 
     Raises:
         HTTP 401 — token missing, malformed, expired, or signature invalid.
-        HTTP 403 — token valid but the required permission is absent.
+        HTTP 403 — token valid but the required role is absent.
     """
-    permissions: list[str] = payload.get("permissions", [])
-    if REQUIRED_PERMISSION not in permissions:
+    claim = payload.get(ROLES_CLAIM)
+    roles: list[str] = claim if isinstance(claim, list) else []
+    if REQUIRED_ROLE not in roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Permission '{REQUIRED_PERMISSION}' required.",
+            detail=f"Role '{REQUIRED_ROLE}' required.",
         )
     return payload
 
