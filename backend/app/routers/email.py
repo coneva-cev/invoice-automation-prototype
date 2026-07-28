@@ -52,6 +52,22 @@ def _persist(batch_id: str, drafts: list[EmailDraft]) -> None:
     get_store().save_drafts(batch_id, [d.model_dump() for d in drafts])
 
 
+@router.get("/mode")
+def email_mode(
+    _: dict = Depends(require_permission("admin")),
+) -> dict:
+    """Report the active send mode so the UI can show it before sending."""
+    cfg = resolve_email_config()
+    return {
+        "app_env": cfg.app_env,
+        "backend": cfg.backend,
+        "sandbox": cfg.sandbox,
+        "delivers": cfg.delivers,
+        "label": cfg.mode_label,
+        "real_send_blocked": cfg.real_send_blocked,
+    }
+
+
 @router.post("/batch/{batch_id}/drafts")
 def generate_drafts(
     batch_id: str,

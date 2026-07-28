@@ -169,7 +169,20 @@ async function sendAll() {
   }
 }
 
-onMounted(generate);
+// Load the active send mode up front so it's visible before sending.
+async function loadMode() {
+  try {
+    const res = await apiFetch('/api/email/mode');
+    if (res.ok) sendMode.value = (await res.json()) as SendMode;
+  } catch {
+    // non-fatal; banner just won't show
+  }
+}
+
+onMounted(() => {
+  loadMode();
+  generate();
+});
 </script>
 
 <template>
@@ -195,6 +208,14 @@ onMounted(generate);
         <Spinner v-if="loading" class="mr-2 h-4 w-4" />
         Regenerate
       </Button>
+      <span
+        v-if="sendMode"
+        class="inline-flex items-center rounded-md border px-2 py-1 text-xs font-medium"
+        :class="modeTone"
+        :title="`env: ${sendMode.app_env}, backend: ${sendMode.backend}`"
+      >
+        {{ sendMode.label }}
+      </span>
       <Button :disabled="sending || readyCount === 0" @click="sendAll">
         <Spinner v-if="sending" class="mr-2 h-4 w-4" />
         {{ sending ? 'Sending…' : `Send ${readyCount} emails` }}
