@@ -8,7 +8,7 @@ import UploadView from './views/UploadView.vue';
 
 const { user, logout } = useAuth0();
 const { apiFetch } = useApi();
-const { isAdmin, isLoading, requiredPermission } = useAuthz();
+const { isAdmin, isLoading, requiredRole } = useAuthz();
 
 const backendStatus = ref<'checking' | 'online' | 'offline'>('checking');
 
@@ -81,8 +81,8 @@ onMounted(checkBackend);
           You are signed in as
           <span class="font-medium">{{ user?.name ?? user?.email }}</span>,
           but your account does not have the required
-          <code class="rounded bg-muted px-1 py-0.5 text-xs">{{ requiredPermission }}</code>
-          permission to use this application.
+          <code class="rounded bg-muted px-1 py-0.5 text-xs">{{ requiredRole }}</code>
+          role to use this application.
         </p>
         <p class="text-muted-foreground text-sm">
           Please contact an administrator to request access.
