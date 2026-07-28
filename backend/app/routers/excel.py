@@ -10,7 +10,9 @@ from __future__ import annotations
 import io
 
 import pandas as pd
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+
+from app.dependencies.auth import require_permission
 
 router = APIRouter(tags=["excel"])
 
@@ -21,7 +23,10 @@ ALLOWED_CONTENT_TYPES = {
 
 
 @router.post("/excel/parse")
-async def parse_excel(file: UploadFile = File(...)) -> dict:
+async def parse_excel(
+    file: UploadFile = File(...),
+    _: dict = Depends(require_permission("admin")),
+) -> dict:
     """Parse an uploaded Excel file and return a preview.
 
     Returns sheet names, column headers and the first few rows so the
