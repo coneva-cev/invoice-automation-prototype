@@ -13,6 +13,7 @@ __pycache__/
 
 # Sample data — real customer PDFs / billing spreadsheets, never commit
 backend/samples/
+test-files/
 
 # Env / secrets — never commit the GitHub Packages token
 .env

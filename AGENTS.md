@@ -35,5 +35,13 @@ Stop: `pkill -f vite && pkill -f uvicorn`.
 ## Backend notes
 
 - Entrypoint `backend/app/main.py` (`app.main:app`): CORS for `http://localhost:5173`, routers mounted under `/api`.
-- Routers: `app/routers/excel.py` (`POST /api/excel/parse`, pandas/openpyxl), `app/routers/pdf.py` (`POST /api/pdf/invoice`, Jinja2 + WeasyPrint). PDF template: `app/templates/invoice.html`.
+- Routers: `app/routers/excel.py` (`POST /api/excel/parse`, pandas/openpyxl), `app/routers/pdf.py` (`POST /api/pdf/invoice`, Jinja2 + WeasyPrint), `app/routers/upload.py` (`POST /api/upload/classify`, `POST /api/upload/process`). PDF template: `app/templates/invoice.html`.
+- Core logic: `app/classification/` (rule-based PDF category + invoice subtype via text markers, using `pypdf`) and `app/mapping/` (MaLo-keyed recipient resolution from an xlsx; one email per customer bundling all their MaLos).
 - Uses a local `.venv` (`backend/.venv`). Deps pinned in `backend/requirements.txt`. API docs at `/docs`.
+
+## Testing (backend)
+
+- Run: `./backend/test.sh` (all) or `./backend/test.sh --no-real` (synthetic only, what CI runs). Deps: `backend/requirements-dev.txt` (`pytest`, `httpx`). Config: `backend/pytest.ini`.
+- Tests do **not** need real data or WeasyPrint: `tests/factories.py` hand-builds minimal text-extractable PDFs (no reportlab/weasyprint) and mapping xlsx with the same markers the classifier keys on. Keep committed tests free of real customer data.
+- `tests/test_realdata.py` is marked `@pytest.mark.realdata` and auto-skips unless the gitignored `backend/samples/` set is present; it pins the known counts (29 invoices / 49 Gutschriften; subtypes 23/3/2/1; 67 emails).
+- Scope note: these are unit + backend API tests only. `test_endpoints.py` uses FastAPI `TestClient` (in-process ASGI — no real socket, no Vite proxy, no browser). True integration (boot `uvicorn` via `run.sh` + real HTTP), full-stack (through the `:5173`→`:8001` proxy), and E2E (browser) are **not yet written**.
