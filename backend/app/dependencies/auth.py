@@ -111,6 +111,19 @@ def _decode_token(token: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def get_verified_payload(
+    credentials: Annotated[HTTPAuthorizationCredentials, Security(_bearer)],
+) -> dict:
+    """Verify the Bearer token and return its decoded payload.
+
+    This is the single verification entry point. Tests can override this one
+    dependency (``app.dependency_overrides[get_verified_payload] = ...``) to
+    bypass real Auth0 verification, and every ``require_permission(...)``
+    dependency picks up the override automatically.
+    """
+    return _decode_token(credentials.credentials)
+
+
 def require_permission(permission: str):
     """Return a FastAPI dependency that enforces the given Auth0 permission.
 
@@ -123,10 +136,8 @@ def require_permission(permission: str):
     """
 
     def _dependency(
-        credentials: Annotated[HTTPAuthorizationCredentials, Security(_bearer)],
+        payload: Annotated[dict, Depends(get_verified_payload)],
     ) -> dict:
-        payload = _decode_token(credentials.credentials)
-
         permissions: list[str] = payload.get("permissions", [])
         if permission not in permissions:
             raise HTTPException(
