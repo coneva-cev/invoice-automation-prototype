@@ -1,20 +1,23 @@
 # AGENTS.md
 
-Invoice Automation prototype: Vue 3 SPA (`frontend/`) + Python FastAPI backend (`backend/`) that parses Excel and generates invoice PDFs. Not a git repo. No monorepo tooling — the two apps are independent, run separately.
+Invoice Automation prototype: Vue 3 SPA (`frontend/`) + Python FastAPI backend (`backend/`) that classifies billing PDFs, maps recipients, bundles for the Coneva Portal, and sends emails. Git repo. No monorepo tooling — the two apps are independent, run separately.
+
+Human onboarding lives in `README.md`. This file captures agent-relevant gotchas.
 
 ## Run locally
 
 ```bash
-# backend (terminal 1) — MUST use run.sh, not raw uvicorn
-./backend/run.sh                       # uvicorn on :8001
-
-# frontend (terminal 2)
-cd frontend && GITHUB_PACKAGES_TOKEN=<token> npm run dev   # vite on :5173
+make setup                # one-time: venv, deps, .env scaffolding (scripts/setup.sh)
+make backend              # terminal 1 — uvicorn on :8001 (wraps backend/run.sh)
+make frontend             # terminal 2 — vite on :5173
+make mailpit              # optional — mail catcher for the email step (:8025 UI)
 ```
+
+`backend/run.sh` is still the real entrypoint (and is mandatory — see below); `make backend` just wraps it. The frontend needs `GITHUB_PACKAGES_TOKEN` exported for `npm install`.
 
 Open http://localhost:5173. Vite proxies `/api/*` → `http://localhost:8001` (see `frontend/vite.config.ts`).
 
-Stop: `pkill -f vite && pkill -f uvicorn`.
+Stop: `make stop` (backend + frontend), `make mailpit-down` (Mailpit).
 
 ## Gotchas that will bite you
 
@@ -35,13 +38,15 @@ Stop: `pkill -f vite && pkill -f uvicorn`.
 ## Backend notes
 
 - Entrypoint `backend/app/main.py` (`app.main:app`): CORS for `http://localhost:5173`, routers mounted under `/api`.
-- Routers: `app/routers/excel.py` (`POST /api/excel/parse`, pandas/openpyxl), `app/routers/pdf.py` (`POST /api/pdf/invoice`, Jinja2 + WeasyPrint), `app/routers/upload.py` (`POST /api/upload/classify`, `POST /api/upload/process`). PDF template: `app/templates/invoice.html`.
-- Core logic: `app/classification/` (rule-based PDF category + invoice subtype via text markers, using `pypdf`) and `app/mapping/` (MaLo-keyed recipient resolution from an xlsx; one email per customer bundling all their MaLos).
+- Env loading: `run.sh` sources `.env.<APP_ENV>` (non-secret per-env defaults, `APP_ENV=local` by default) then the gitignored `.env` (secrets/overrides). Auth0 + monitoring vars are **required** or the app fails to import.
+- Routers: `app/routers/excel.py` (`POST /api/excel/parse`), `app/routers/pdf.py` (`POST /api/pdf/invoice`, Jinja2 + WeasyPrint), `app/routers/upload.py` (classify/process + batch bundle/store), `app/routers/documents.py` (Portal bulk-upload via monitoring-API token exchange), `app/routers/email.py` (draft + send). PDF template: `app/templates/invoice.html`.
+- Auth: `app/dependencies/auth.py` verifies Auth0 JWTs and gates every protected route on the `Invoice Automation Admin` role (`require_admin`); `app/services/token_exchange.py` swaps the user token for a monitoring-API-scoped one (RFC 8693). Config is centralized via env (`REQUIRED_ROLE`, `ROLES_CLAIM`).
+- Core logic: `app/classification/` (rule-based PDF category + invoice subtype via text markers, using `pypdf`) and `app/mapping/` (MaLo-keyed recipient resolution from an xlsx; one email per customer bundling all their MaLos). `app/bundling/` (flat zip) and `app/storage/` (per-batch PDF store).
 - Uses a local `.venv` (`backend/.venv`). Deps pinned in `backend/requirements.txt`. API docs at `/docs`.
 
 ## Testing (backend)
 
-- Run: `./backend/test.sh` (all) or `./backend/test.sh --no-real` (synthetic only, what CI runs). Deps: `backend/requirements-dev.txt` (`pytest`, `httpx`). Config: `backend/pytest.ini`.
+- Run: `make test` / `./backend/test.sh --no-real` (synthetic only, what CI runs) or `make test-all` / `./backend/test.sh` (all). Integration (email) tests need Mailpit up (`make mailpit`). Deps: `backend/requirements-dev.txt` (`pytest`, `httpx`). Config: `backend/pytest.ini`.
 - Tests do **not** need real data or WeasyPrint: `tests/factories.py` hand-builds minimal text-extractable PDFs (no reportlab/weasyprint) and mapping xlsx with the same markers the classifier keys on. Keep committed tests free of real customer data.
 - `tests/test_realdata.py` is marked `@pytest.mark.realdata` and auto-skips unless the gitignored `backend/samples/` set is present; it pins the known counts (29 invoices / 49 Gutschriften; subtypes 23/3/2/1; 67 emails).
 - Scope note: these are unit + backend API tests only. `test_endpoints.py` uses FastAPI `TestClient` (in-process ASGI — no real socket, no Vite proxy, no browser). True integration (boot `uvicorn` via `run.sh` + real HTTP), full-stack (through the `:5173`→`:8001` proxy), and E2E (browser) are **not yet written**.
