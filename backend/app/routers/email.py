@@ -20,6 +20,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
+from pydantic import BaseModel
 
 from ..email import (
     DraftPatch,
@@ -114,6 +115,17 @@ def _find(drafts: list[EmailDraft], draft_id: str) -> EmailDraft:
     raise HTTPException(status_code=404, detail="Draft not found.")
 
 
+class SendRequest(BaseModel):
+    """Optional body for the send endpoint.
+
+    When ``draft_ids`` is provided, only those drafts are sent (used to send a
+    user-selected subset — e.g. excluding drafts whose documents failed to
+    upload to the Portal). When omitted, all sendable drafts are sent.
+    """
+
+    draft_ids: list[str] | None = None
+
+
 @router.get("/batch/{batch_id}/drafts/{draft_id}/preview", response_class=HTMLResponse)
 def preview_draft(
     batch_id: str,
@@ -186,12 +198,22 @@ def patch_draft(
 @router.post("/batch/{batch_id}/drafts/send")
 def send_drafts(
     batch_id: str,
+    payload: SendRequest | None = None,
     _: dict = Depends(require_admin),
 ) -> dict:
-    """Send all sendable drafts via the configured backend."""
+    """Send sendable drafts via the configured backend.
+
+    If ``payload.draft_ids`` is provided, only those drafts are considered for
+    sending (others are skipped). This lets the UI send a user-selected subset —
+    by default only drafts whose documents uploaded to the Portal successfully.
+    """
     drafts = _load_drafts(batch_id)
     store = get_store()
     sender = get_sender()
+
+    selected_ids: set[str] | None = (
+        set(payload.draft_ids) if payload and payload.draft_ids is not None else None
+    )
 
     # Resolve + log the active send mode so it's never a surprise which
     # transport ran (and whether anything was actually delivered).
@@ -207,6 +229,9 @@ def send_drafts(
 
     results: list[dict] = []
     for draft in drafts:
+        # Skip drafts the caller did not select for this send.
+        if selected_ids is not None and draft.draft_id not in selected_ids:
+            continue
         if draft.status is DraftStatus.SENT:
             results.append(
                 {"draft_id": draft.draft_id, "sent": True, "status": "SENT",

@@ -213,6 +213,49 @@ def test_send_via_console_backend(client, pdf_upload, mapping_upload, monkeypatc
     reset_sender()
 
 
+def test_send_only_selected_drafts(client, pdf_upload, mapping_upload, monkeypatch):
+    """With draft_ids provided, only those drafts are sent; others untouched."""
+    monkeypatch.setenv("EMAIL_BACKEND", "console")
+    reset_sender()
+
+    data = _process(
+        client,
+        pdf_upload,
+        mapping_upload,
+        {
+            "inv.pdf": invoice_pdf("TARIF_ONLY", malo="50000000001"),
+            "gut.pdf": gutschrift_pdf(malo="50000000002"),
+        },
+        [
+            MappingRow(["50000000001"], "Acme GmbH", "a@acme.example"),
+            MappingRow(["50000000002"], "Erz GmbH", "e@erz.example"),
+        ],
+    )
+    batch_id = data["batch_id"]
+    gen = client.post(f"/api/email/batch/{batch_id}/drafts").json()
+    assert gen["total"] == 2
+    chosen = gen["drafts"][0]["draft_id"]
+
+    # Send only the chosen draft.
+    r = client.post(
+        f"/api/email/batch/{batch_id}/drafts/send",
+        json={"draft_ids": [chosen]},
+    )
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["sent"] == 1
+    assert len(out["results"]) == 1
+    assert out["results"][0]["draft_id"] == chosen
+
+    # The other draft remains unsent (READY); only the chosen one is SENT.
+    listed = client.get(f"/api/email/batch/{batch_id}/drafts").json()
+    by_id = {d["draft_id"]: d["status"] for d in listed["drafts"]}
+    assert by_id[chosen] == "SENT"
+    assert sum(1 for s in by_id.values() if s == "SENT") == 1
+    assert sum(1 for s in by_id.values() if s == "READY") == 1
+    reset_sender()
+
+
 def test_console_sender_attaches_real_bytes():
     """The console sender records the exact attachment bytes."""
     from app.email.models import EmailAttachment, OutboundEmail

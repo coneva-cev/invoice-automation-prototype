@@ -5,13 +5,17 @@ import { Badge } from '@coneva-cev/storybook/badge';
 import { Spinner } from '@coneva-cev/storybook/spinner';
 import { useApi } from '../composables/useApi';
 import type {
+  BulkUploadResult,
   EmailDraft,
   ProcessResponse,
   SendMode,
   SendResultItem,
 } from '../types';
 
-const props = defineProps<{ result: ProcessResponse }>();
+const props = defineProps<{
+  result: ProcessResponse;
+  uploadResult?: BulkUploadResult | null;
+}>();
 
 const { apiFetch } = useApi();
 
@@ -19,6 +23,10 @@ const drafts = ref<EmailDraft[]>([]);
 const selectedId = ref<string | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
+
+// Draft ids the user has chosen to send. Defaults (on draft load) to only
+// drafts whose documents all uploaded to the Portal successfully.
+const chosenIds = ref<Set<string>>(new Set());
 
 const previewHtml = ref<string>('');
 const previewLoading = ref(false);
@@ -39,10 +47,80 @@ const sentCount = computed(
   () => drafts.value.filter((d) => d.status === 'SENT').length,
 );
 
+// --- Portal upload status per draft ---------------------------------------
+// A draft's upload is "OK" only when every one of its attached documents
+// uploaded to the Portal successfully. When no upload result is available
+// (e.g. the Portal step was skipped), status is "unknown".
+type UploadStatus = 'ok' | 'failed' | 'unknown';
+
+function draftUploadStatus(draft: EmailDraft): UploadStatus {
+  const res = props.uploadResult;
+  if (!res) return 'unknown';
+  if (draft.attachments.length === 0) return 'unknown';
+  const allOk = draft.attachments.every((a) => {
+    const status = res[a.filename];
+    return typeof status === 'string' && !status.toUpperCase().startsWith('ERROR');
+  });
+  return allOk ? 'ok' : 'failed';
+}
+
+// Which failed-upload document(s) block a draft, for the tooltip/inline note.
+function draftFailedFiles(draft: EmailDraft): string[] {
+  const res = props.uploadResult;
+  if (!res) return [];
+  return draft.attachments
+    .filter((a) => {
+      const status = res[a.filename];
+      return (
+        typeof status === 'string' && status.toUpperCase().startsWith('ERROR')
+      );
+    })
+    .map((a) => a.filename);
+}
+
+const hasUploadResult = computed(() => !!props.uploadResult);
+const uploadFailedCount = computed(
+  () => drafts.value.filter((d) => draftUploadStatus(d) === 'failed').length,
+);
+
+// Default the selection to sendable drafts whose upload succeeded (or unknown
+// when no upload result is present). Failed-upload drafts are left unchecked.
+function resetSelection() {
+  const next = new Set<string>();
+  for (const d of drafts.value) {
+    if (d.status !== 'READY') continue;
+    if (draftUploadStatus(d) !== 'failed') next.add(d.draft_id);
+  }
+  chosenIds.value = next;
+}
+
+function toggleChosen(draftId: string) {
+  const next = new Set(chosenIds.value);
+  if (next.has(draftId)) next.delete(draftId);
+  else next.add(draftId);
+  chosenIds.value = next;
+}
+
+const chosenReadyCount = computed(
+  () =>
+    drafts.value.filter(
+      (d) => d.status === 'READY' && chosenIds.value.has(d.draft_id),
+    ).length,
+);
+
 function statusVariant(s: string) {
   if (s === 'READY') return 'default';
   if (s === 'SENT') return 'secondary';
   return 'destructive';
+}
+
+function uploadBadge(status: UploadStatus): {
+  variant: 'secondary' | 'destructive';
+  label: string;
+} | null {
+  if (status === 'ok') return { variant: 'secondary', label: 'Portal ✓' };
+  if (status === 'failed') return { variant: 'destructive', label: 'Portal ✗' };
+  return null;
 }
 
 // Style the mode banner by how "live" the send is.
@@ -71,6 +149,7 @@ async function generate() {
     }
     drafts.value = (await res.json()).drafts as EmailDraft[];
     selectedId.value = drafts.value[0]?.draft_id ?? null;
+    resetSelection();
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -151,7 +230,12 @@ async function sendAll() {
   sending.value = true;
   error.value = null;
   try {
-    const res = await apiFetch(`${base.value}/drafts/send`, { method: 'POST' });
+    // Send only the user-selected drafts (defaults to upload-successful ones).
+    const res = await apiFetch(`${base.value}/drafts/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ draft_ids: [...chosenIds.value] }),
+    });
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       throw new Error(d.detail || `HTTP ${res.status}`);
@@ -199,6 +283,12 @@ onMounted(() => {
       <Badge variant="default">{{ readyCount }} ready</Badge>
       <Badge variant="secondary">{{ sentCount }} sent</Badge>
       <Badge variant="outline">{{ drafts.length }} drafts</Badge>
+      <Badge
+        v-if="hasUploadResult && uploadFailedCount"
+        variant="destructive"
+      >
+        {{ uploadFailedCount }} with failed Portal upload
+      </Badge>
       <Button
         variant="outline"
         class="ml-auto"
@@ -216,11 +306,22 @@ onMounted(() => {
       >
         {{ sendMode.label }}
       </span>
-      <Button :disabled="sending || readyCount === 0" @click="sendAll">
+      <Button :disabled="sending || chosenReadyCount === 0" @click="sendAll">
         <Spinner v-if="sending" class="mr-2 h-4 w-4" />
-        {{ sending ? 'Sending…' : `Send ${readyCount} emails` }}
+        {{ sending ? 'Sending…' : `Send ${chosenReadyCount} selected` }}
       </Button>
     </div>
+
+    <!-- Explanation of the default selection when some uploads failed. -->
+    <p
+      v-if="hasUploadResult && uploadFailedCount"
+      class="text-xs text-muted-foreground"
+    >
+      By default only emails whose documents uploaded to the Portal
+      successfully are selected. Tick a draft marked
+      <span class="font-medium text-destructive">Portal ✗</span> to send it
+      anyway.
+    </p>
 
     <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
 
@@ -276,23 +377,47 @@ onMounted(() => {
     <div v-else class="grid gap-4 md:grid-cols-[280px_1fr]">
       <!-- Draft list -->
       <ul class="space-y-1 rounded-md border p-2">
-        <li v-for="d in drafts" :key="d.draft_id">
+        <li v-for="d in drafts" :key="d.draft_id" class="flex items-start gap-2">
+          <input
+            type="checkbox"
+            class="mt-2.5"
+            :checked="chosenIds.has(d.draft_id)"
+            :disabled="d.status !== 'READY'"
+            :title="
+              d.status !== 'READY'
+                ? 'Only READY drafts can be sent'
+                : 'Include this email when sending'
+            "
+            @change="toggleChosen(d.draft_id)"
+          />
           <button
-            class="w-full rounded-md p-2 text-left text-sm hover:bg-accent"
+            class="min-w-0 flex-1 rounded-md p-2 text-left text-sm hover:bg-accent"
             :class="d.draft_id === selectedId ? 'bg-accent' : ''"
             @click="selectedId = d.draft_id"
           >
             <div class="flex items-center justify-between gap-2">
-              <span class="truncate font-medium">
+              <span class="min-w-0 truncate font-medium">
                 {{ d.unternehmen ?? '—' }}
               </span>
-              <Badge :variant="statusVariant(d.status)" class="text-[10px]">
+              <Badge :variant="statusVariant(d.status)" class="shrink-0 text-[10px]">
                 {{ d.status }}
               </Badge>
             </div>
-            <div class="mt-1 flex items-center gap-1">
+            <div class="mt-1 flex flex-wrap items-center gap-1">
               <Badge :variant="categoryVariant(d.category)" class="text-[10px]">
                 {{ d.category }}
+              </Badge>
+              <Badge
+                v-if="uploadBadge(draftUploadStatus(d))"
+                :variant="uploadBadge(draftUploadStatus(d))!.variant"
+                class="text-[10px]"
+                :title="
+                  draftUploadStatus(d) === 'failed'
+                    ? 'Failed Portal upload: ' + draftFailedFiles(d).join(', ')
+                    : 'All documents uploaded to the Portal'
+                "
+              >
+                {{ uploadBadge(draftUploadStatus(d))!.label }}
               </Badge>
               <span class="text-xs text-muted-foreground">
                 {{ d.attachments.length }} file(s)
