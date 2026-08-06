@@ -28,9 +28,15 @@ const mismatchCount = computed(
 );
 const hasMismatches = computed(() => mismatchCount.value > 0);
 
-// Default to the mismatches tab when there's something to resolve.
-const tab = ref<'documents' | 'emails' | 'mismatches'>(
-  hasMismatches.value ? 'mismatches' : 'documents',
+// Successful matches: customers from the Excel mapping that were paired with
+// at least one uploaded PDF (i.e. document ↔ recipient matched).
+const matches = computed(() => matchedEmails.value);
+const hasMatches = computed(() => matches.value.length > 0);
+
+// Default to the mismatches tab when there's something to resolve; otherwise
+// show the matches when there are any.
+const tab = ref<'matches' | 'documents' | 'emails' | 'mismatches'>(
+  hasMismatches.value ? 'mismatches' : hasMatches.value ? 'matches' : 'documents',
 );
 
 function categoryVariant(cat: string) {
@@ -74,6 +80,11 @@ function money(v: unknown) {
       </Badge>
       <Badge variant="secondary">{{ result.summary.emails_to_send }} emails</Badge>
       <Badge
+        class="border-transparent bg-green-600 text-white"
+      >
+        matches: {{ matches.length }}
+      </Badge>
+      <Badge
         :variant="result.summary.unmatched_documents ? 'destructive' : 'outline'"
       >
         PDFs without recipient: {{ result.summary.unmatched_documents }}
@@ -92,6 +103,23 @@ function money(v: unknown) {
 
     <!-- Tabs -->
     <div class="flex gap-2 border-b">
+      <button
+        v-if="hasMatches"
+        class="flex items-center gap-1.5 px-3 py-2 text-sm font-medium -mb-px border-b-2"
+        :class="
+          tab === 'matches'
+            ? 'border-green-600 text-green-700 dark:text-green-500'
+            : 'border-transparent text-green-700/70 dark:text-green-500/70'
+        "
+        @click="tab = 'matches'"
+      >
+        Matches
+        <Badge
+          class="text-[10px] border-transparent bg-green-600 text-white"
+        >
+          {{ matches.length }}
+        </Badge>
+      </button>
       <button
         class="px-3 py-2 text-sm font-medium -mb-px border-b-2"
         :class="
@@ -131,8 +159,42 @@ function money(v: unknown) {
       </button>
     </div>
 
+    <!-- Matches table (document ↔ Excel recipient matched) -->
+    <div v-if="tab === 'matches'" class="space-y-2">
+      <p class="text-xs font-medium text-green-700 dark:text-green-500">
+        Documents successfully matched to a recipient from the Excel mapping
+        ({{ matches.length }})
+      </p>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Customer</TableHead>
+            <TableHead>TO</TableHead>
+            <TableHead>CC</TableHead>
+            <TableHead>MaLos</TableHead>
+            <TableHead>Documents</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <TableRow
+            v-for="(e, i) in matches"
+            :key="i"
+            class="bg-green-500/10"
+          >
+            <TableCell class="font-medium">{{ e.unternehmen ?? '—' }}</TableCell>
+            <TableCell class="text-xs">{{ e.to.join(', ') || '—' }}</TableCell>
+            <TableCell class="text-xs">{{ e.cc.join(', ') || '—' }}</TableCell>
+            <TableCell class="text-xs">{{ e.malos.join(', ') || '—' }}</TableCell>
+            <TableCell class="text-xs">
+              <div v-for="doc in e.documents" :key="doc">{{ doc }}</div>
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
+    </div>
+
     <!-- Documents table -->
-    <Table v-if="tab === 'documents'">
+    <Table v-else-if="tab === 'documents'">
       <TableHeader>
         <TableRow>
           <TableHead>Category</TableHead>
