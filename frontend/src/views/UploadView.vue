@@ -7,7 +7,7 @@ import StepValidation from '../steps/StepValidation.vue';
 import StepPortal from '../steps/StepPortal.vue';
 import StepSend from '../steps/StepSend.vue';
 import { useApi } from '../composables/useApi';
-import type { ProcessResponse, StepId } from '../types';
+import type { BulkUploadResult, ProcessResponse, StepId } from '../types';
 
 const { apiFetch } = useApi();
 
@@ -26,6 +26,15 @@ const mappingFile = ref<File | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const result = ref<ProcessResponse | null>(null);
+
+// Whether the batch was successfully uploaded to the Portal (set by StepPortal).
+// Gate leaving the portal step for email sending on an explicit confirmation
+// when the upload has not succeeded.
+const portalUploaded = ref(false);
+const confirmSkipUpload = ref(false);
+// Per-file Portal upload result (filename -> "OK" | "ERROR: ..."), used by the
+// send step to default-select only successfully-uploaded documents.
+const portalUploadResult = ref<BulkUploadResult | null>(null);
 
 const canProcess = computed(
   () => pdfFiles.value.length > 0 && !!mappingFile.value && !loading.value,
@@ -65,11 +74,19 @@ async function goNext() {
   } else if (step.value === 'validation') {
     step.value = 'portal';
   } else if (step.value === 'portal') {
+    // Require an explicit confirmation before sending emails if the Portal
+    // upload has not succeeded.
+    if (!portalUploaded.value && !confirmSkipUpload.value) {
+      confirmSkipUpload.value = true;
+      return;
+    }
+    confirmSkipUpload.value = false;
     step.value = 'send';
   }
 }
 
 function goBack() {
+  confirmSkipUpload.value = false;
   const idx = stepIndex.value;
   if (idx > 0) step.value = STEPS[idx - 1].id;
 }
@@ -85,6 +102,7 @@ function canVisit(i: number): boolean {
 
 function goToStep(i: number) {
   if (!canVisit(i)) return;
+  confirmSkipUpload.value = false;
   step.value = STEPS[i].id;
 }
 
@@ -172,6 +190,15 @@ const nextDisabled = computed(() => {
         {{ loading ? 'Processing…' : nextLabel }}
       </Button>
       <span v-if="error" class="text-sm text-destructive">{{ error }}</span>
+
+      <!-- Confirm proceeding to email send without a successful Portal upload -->
+      <span
+        v-if="confirmSkipUpload && step === 'portal'"
+        class="text-sm text-destructive"
+      >
+        The bundle was not uploaded to the Portal. Continue to sending emails
+        anyway? Press “Continue to send emails” again to confirm.
+      </span>
     </div>
 
     <!-- Active step -->
@@ -184,7 +211,21 @@ const nextDisabled = computed(() => {
       v-else-if="step === 'validation' && result"
       :result="result"
     />
-    <StepPortal v-else-if="step === 'portal' && result" :result="result" />
-    <StepSend v-else-if="step === 'send' && result" :result="result" />
+    <StepPortal
+      v-else-if="step === 'portal' && result"
+      :result="result"
+      @update:uploaded="
+        (v: boolean) => {
+          portalUploaded = v;
+          if (v) confirmSkipUpload = false;
+        }
+      "
+      @update:upload-result="(v) => (portalUploadResult = v)"
+    />
+    <StepSend
+      v-else-if="step === 'send' && result"
+      :result="result"
+      :upload-result="portalUploadResult"
+    />
   </div>
 </template>

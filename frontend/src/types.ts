@@ -61,6 +61,12 @@ export interface ProcessResponse {
 
 export type StepId = 'upload' | 'validation' | 'portal' | 'send';
 
+/**
+ * Portal bulk-upload result: maps each PDF filename to its status, either
+ * "OK" or "ERROR: <reason>" (returned verbatim by the monitoring API).
+ */
+export type BulkUploadResult = Record<string, string>;
+
 export interface DraftAttachment {
   doc_id: string;
   filename: string;
