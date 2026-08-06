@@ -1,35 +1,37 @@
-"""Auth0 Token Exchange service.
+"""Monitoring API token service.
 
-Exchanges a user's access token (scoped to the invoice automation API) for a
-new access token scoped to a downstream API, preserving the user's identity
-(``sub`` claim) so the downstream API can enforce its own RBAC on the user.
+Obtains an access token scoped to the monitoring/Portal API so the backend can
+call it on behalf of the application.
 
-This implements RFC 8693 (OAuth 2.0 Token Exchange) as supported by Auth0.
+Auth model
+----------
+The backend uses the OAuth 2.0 **client_credentials** grant with its
+machine-to-machine application (``AUTH0_CLIENT_ID`` / ``AUTH0_CLIENT_SECRET``),
+which is authorised for the monitoring API audience and carries the
+``PORTAL_POSTBOX:WRITE`` permission.
 
-Auth0 requirements
-------------------
-* The backend M2M application (identified by AUTH0_CLIENT_ID) must be
-  authorised to request tokens for the target audience in the Auth0 Dashboard.
-* Token Exchange must be permitted for the target API in the Auth0 tenant.
+Note: this is a *service* identity, not the end user's. Per-user authorisation
+is still enforced upstream — every route that calls the monitoring API depends
+on ``require_admin`` first, so only users with the ``Invoice Automation Admin``
+role can trigger these calls. (A true on-behalf-of / RFC 8693 token exchange
+that preserves the user's ``sub`` would require Auth0 Custom Token Exchange to
+be enabled on the tenant, which it is not.)
+
+Tokens are cached in-process until shortly before they expire, since a
+client_credentials token is not user-specific and can be reused across requests.
 
 Usage
 -----
     from app.services.token_exchange import get_monitoring_token
 
-    monitoring_token = await get_monitoring_token(user_raw_token)
-    # use monitoring_token as Bearer for monitoring API calls
-
-For future calls to other APIs with a different audience, call
-``exchange_token`` directly:
-
-    from app.services.token_exchange import exchange_token
-
-    other_token = await exchange_token(user_raw_token, audience="https://other-api/")
+    token = await get_monitoring_token()
+    # use as Bearer for monitoring API calls
 """
 
 from __future__ import annotations
 
 import os
+import time
 
 import httpx
 from fastapi import HTTPException, status
@@ -40,39 +42,38 @@ _AUTH0_CLIENT_SECRET = os.environ["AUTH0_CLIENT_SECRET"]
 _MONITORING_API_AUDIENCE = os.environ["MONITORING_API_AUDIENCE"]
 
 _TOKEN_ENDPOINT = f"https://{_AUTH0_DOMAIN}/oauth/token"
-_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchange"
-_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"
+_GRANT_TYPE = "client_credentials"
+
+# Refresh a little before actual expiry to avoid races on the boundary.
+_EXPIRY_SKEW_SECONDS = 60
+
+# In-process cache: {audience: (access_token, expires_at_epoch)}.
+_token_cache: dict[str, tuple[str, float]] = {}
 
 
-async def exchange_token(user_token: str, audience: str) -> str:
-    """Exchange a user access token for one scoped to ``audience``.
+async def get_token_for_audience(audience: str) -> str:
+    """Return a cached or freshly minted access token for ``audience``.
 
-    This is the general-purpose exchange primitive. Prefer the named helpers
-    below (e.g. ``get_monitoring_token``) for specific downstream APIs.
-
-    Args:
-        user_token: The raw Bearer token received from the frontend, already
-            validated against the invoice automation API.
-        audience: The API identifier (audience) of the target API.
-
-    Returns:
-        A new access token scoped to ``audience``, with the user's ``sub``
-        preserved.
+    Uses the backend's machine-to-machine credentials (client_credentials).
 
     Raises:
-        HTTP 502: Auth0 rejected the exchange or was unreachable.
+        HTTP 502: Auth0 rejected the request or was unreachable.
     """
+    cached = _token_cache.get(audience)
+    if cached is not None:
+        token, expires_at = cached
+        if time.time() < expires_at - _EXPIRY_SKEW_SECONDS:
+            return token
+
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(
                 _TOKEN_ENDPOINT,
                 json={
                     "grant_type": _GRANT_TYPE,
-                    "subject_token": user_token,
-                    "subject_token_type": _TOKEN_TYPE,
-                    "audience": audience,
                     "client_id": _AUTH0_CLIENT_ID,
                     "client_secret": _AUTH0_CLIENT_SECRET,
+                    "audience": audience,
                 },
             )
     except httpx.RequestError as exc:
@@ -82,20 +83,32 @@ async def exchange_token(user_token: str, audience: str) -> str:
         )
 
     if response.status_code != 200:
-        body = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
-        error_description = body.get("error_description") or body.get("error") or response.text
+        body = (
+            response.json()
+            if response.headers.get("content-type", "").startswith(
+                "application/json"
+            )
+            else {}
+        )
+        error_description = (
+            body.get("error_description") or body.get("error") or response.text
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Auth0 token exchange failed: {error_description}",
+            detail=f"Auth0 token request failed: {error_description}",
         )
 
-    return response.json()["access_token"]
+    data = response.json()
+    access_token = data["access_token"]
+    expires_in = int(data.get("expires_in", 3600))
+    _token_cache[audience] = (access_token, time.time() + expires_in)
+    return access_token
 
 
-async def get_monitoring_token(user_token: str) -> str:
-    """Exchange a user token for one scoped to the monitoring API.
+async def get_monitoring_token() -> str:
+    """Return an access token scoped to the monitoring API.
 
-    Convenience wrapper around ``exchange_token`` for the monitoring API
+    Convenience wrapper around ``get_token_for_audience`` for the monitoring API
     audience configured via ``MONITORING_API_AUDIENCE`` in the environment.
     """
-    return await exchange_token(user_token, audience=_MONITORING_API_AUDIENCE)
+    return await get_token_for_audience(_MONITORING_API_AUDIENCE)
