@@ -21,23 +21,47 @@
                   Sehr geehrte Damen und Herren,
                 </p>
                 <p style="margin:0 0 16px;font-size:15px;line-height:1.5;">
-                  anbei erhalten sie unsere Gutschrift gemäß Vertrag zur
-                  Stromvermarktung. Die folgenden Dokumente sind dieser E-Mail
-                  als PDF beigefügt:
+                  anbei erhalten Sie Ihre Abrechnungsunterlagen für die
+                  Stromvermarktung.
+                </p>
+                <p style="margin:0 0 8px;font-size:15px;line-height:1.5;">
+                  Sie erhalten folgende Dokumente:
+                </p>
+                <ul style="margin:0 0 16px;padding-left:20px;font-size:14px;line-height:1.6;">
+                  <li>
+                    Gutschrift(en) – Ihre Stromeinspeisung (ggf. abzüglich
+                    Messstellengebühr)
+                  </li>
+                  <li>
+                    Rechnung(en) – monatliche Gebühr, gemäß vertraglicher
+                    Vereinbarung (Punkt 3.3)
+                  </li>
+                </ul>
+                {% if documents %}
+                <p style="margin:0 0 8px;font-size:15px;line-height:1.5;">
+                  Die folgenden Dokumente sind dieser E-Mail als PDF beigefügt:
                 </p>
                 <ul style="margin:0 0 16px;padding-left:20px;font-size:14px;line-height:1.6;">
                   {% for doc in documents %}
                   <li>{{ doc.filename | basename }}</li>
                   {% endfor %}
                 </ul>
+                {% endif %}
                 <p style="margin:0 0 16px;font-size:15px;line-height:1.5;">
                   Die Dokumente können Sie auch in unserem
                   <a href="https://portal.conevacloud.com/">coneva Portal</a>
                   abrufen.
                 </p>
+                <p style="margin:0 0 8px;font-size:15px;font-weight:bold;line-height:1.5;">
+                  Wie erfolgt der Ausgleich?
+                </p>
                 <p style="margin:0 0 16px;font-size:15px;line-height:1.5;">
-                  Informationen zum aktuellen coneva Strommix finden Sie unter
-                  <a href="https://coneva.com/coneva-stromkennzeichnung/">https://coneva.com/coneva-stromkennzeichnung/</a>.
+                  Zur Vereinfachung des Vorgangs werden wir die Belege
+                  miteinander verrechnen. Den verbleibenden Differenzbetrag
+                  werden wir entweder zu Ihren Gunsten auszahlen oder ziehen ihn
+                  – falls vereinbart – per Lastschrift ein. Sollte uns kein
+                  SEPA-Mandat vorliegen, bitten wir um die Überweisung des
+                  Betrags.
                 </p>
                 <p style="margin:0 0 16px;font-size:15px;line-height:1.5;">
                   Bei Fragen stehen wir Ihnen gerne zur Verfügung. Bitte
