@@ -96,11 +96,28 @@ export interface SendResultItem {
   detail: string | null;
 }
 
+export type SendDestinationKind =
+  | 'mailpit'
+  | 'sendgrid_sandbox'
+  | 'sendgrid_coneva'
+  | 'sendgrid_live';
+
+/** Shape of GET /api/email/mode — drives the Send-step destination UI. */
 export interface SendMode {
-  app_env: string;
+  app_mode: 'test' | 'live';
+  destinations: SendDestinationKind[];
+  test_default_recipient: string | null;
+  test_allowed_domains: string[];
+  bcc: string[];
+}
+
+/** Shape of the `mode` block returned by the send endpoint (what happened). */
+export interface SendResultMode {
+  app_mode: 'test' | 'live';
+  destination: SendDestinationKind;
   backend: string;
   sandbox: boolean;
-  delivers: boolean;
-  label: string;
-  real_send_blocked: boolean;
+  replaced_to: string | null;
+  delivers_real: boolean;
+  bcc: string[];
 }

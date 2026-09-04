@@ -58,10 +58,11 @@ def _process(client, pdf_upload, mapping_upload, pdfs, rows):
 def test_send_lands_in_mailpit_with_attachment(
     client, pdf_upload, mapping_upload, monkeypatch, _clean_mailpit
 ):
-    monkeypatch.setenv("EMAIL_BACKEND", "smtp")
+    monkeypatch.setenv("EMAIL_MODE", "test")
     monkeypatch.setenv("SMTP_HOST", SMTP_HOST)
     monkeypatch.setenv("SMTP_PORT", SMTP_PORT)
     monkeypatch.setenv("EMAIL_FROM", "coneva <noreply@coneva.test>")
+    monkeypatch.delenv("EMAIL_BACKEND", raising=False)
     reset_sender()
 
     data = _process(
@@ -74,7 +75,11 @@ def test_send_lands_in_mailpit_with_attachment(
     batch_id = data["batch_id"]
     client.post(f"/api/email/batch/{batch_id}/drafts")
 
-    resp = client.post(f"/api/email/batch/{batch_id}/drafts/send")
+    # Test-mode Mailpit destination: recipient is replaced with a coneva address.
+    resp = client.post(
+        f"/api/email/batch/{batch_id}/drafts/send",
+        json={"destination": {"kind": "mailpit", "replace_to": "tester@coneva.com"}},
+    )
     assert resp.status_code == 200, resp.text
     assert resp.json()["sent"] == 1
 
@@ -83,9 +88,10 @@ def test_send_lands_in_mailpit_with_attachment(
     assert messages["total"] >= 1
     msg_summary = messages["messages"][0]
 
-    # Recipient is correct.
+    # Recipient was replaced with the coneva test address (not the real one).
     to_addrs = [t["Address"] for t in msg_summary["To"]]
-    assert "billing@acme.example" in to_addrs
+    assert "tester@coneva.com" in to_addrs
+    assert "billing@acme.example" not in to_addrs
     assert "Verbrauchsabrechnung" in msg_summary["Subject"]
 
     # Fetch full message to check the attachment.

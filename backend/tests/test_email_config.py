@@ -1,4 +1,9 @@
-"""Tests for APP_ENV-driven email backend resolution."""
+"""Tests for APP_ENV-driven email backend resolution.
+
+Note: delivery safety (test/live, recipient replacement, domain allow-list) is
+NOT decided here — see test_email_destinations.py. This module only checks that
+``resolve_email_config`` resolves the transport backend + sandbox defaults.
+"""
 
 from __future__ import annotations
 
@@ -17,23 +22,10 @@ def test_staging_defaults_to_sendgrid_sandbox_on():
     assert cfg.sandbox is True
 
 
-def test_production_without_opt_in_is_forced_to_sandbox():
-    # Fail-closed: production selects sendgrid, but without the real-send
-    # opt-in it must NOT deliver — forced back into sandbox.
+def test_production_defaults_to_sendgrid_sandbox_off():
     cfg = resolve_email_config({"APP_ENV": "production"})
     assert cfg.backend == "sendgrid"
-    assert cfg.sandbox is True
-    assert cfg.real_send_blocked is True
-    assert cfg.delivers is False
-
-
-def test_production_with_opt_in_delivers():
-    cfg = resolve_email_config(
-        {"APP_ENV": "production", "EMAIL_ALLOW_REAL_SEND": "true"}
-    )
-    assert cfg.backend == "sendgrid"
     assert cfg.sandbox is False
-    assert cfg.real_send_blocked is False
     assert cfg.delivers is True
 
 
@@ -55,31 +47,10 @@ def test_explicit_backend_overrides_app_env():
 
 
 def test_explicit_sandbox_overrides_app_env():
-    # production + explicit sandbox true -> sandbox (no delivery), no opt-in needed.
-    cfg = resolve_email_config(
-        {"APP_ENV": "production", "SENDGRID_SANDBOX": "true"}
-    )
+    cfg = resolve_email_config({"APP_ENV": "production", "SENDGRID_SANDBOX": "true"})
     assert cfg.sandbox is True
-    # staging + explicit sandbox false, but WITH the real-send opt-in -> delivers.
-    cfg = resolve_email_config(
-        {
-            "APP_ENV": "staging",
-            "SENDGRID_SANDBOX": "false",
-            "EMAIL_ALLOW_REAL_SEND": "true",
-        }
-    )
+    cfg = resolve_email_config({"APP_ENV": "staging", "SENDGRID_SANDBOX": "false"})
     assert cfg.sandbox is False
-    assert cfg.delivers is True
-
-
-def test_sandbox_off_without_opt_in_is_still_blocked():
-    # Even explicitly turning sandbox off does not deliver without the opt-in.
-    cfg = resolve_email_config(
-        {"APP_ENV": "staging", "SENDGRID_SANDBOX": "false"}
-    )
-    assert cfg.sandbox is True
-    assert cfg.real_send_blocked is True
-    assert cfg.delivers is False
 
 
 def test_backend_and_sandbox_are_case_insensitive():

@@ -29,9 +29,15 @@ from ..email import (
     EmailDraft,
     OutboundEmail,
     build_drafts,
-    get_sender,
 )
-from ..email.config import resolve_email_config
+from ..email.config import (
+    allowed_destinations,
+    build_send_mode_view,
+    resolve_app_mode,
+    resolve_bcc,
+    resolve_send_plan,
+)
+from ..email.sender import EmailSenderConfigError, build_sender
 from ..email.template import render_email
 from ..storage import get_store
 from app.dependencies.auth import require_admin
@@ -57,16 +63,8 @@ def _persist(batch_id: str, drafts: list[EmailDraft]) -> None:
 def email_mode(
     _: dict = Depends(require_admin),
 ) -> dict:
-    """Report the active send mode so the UI can show it before sending."""
-    cfg = resolve_email_config()
-    return {
-        "app_env": cfg.app_env,
-        "backend": cfg.backend,
-        "sandbox": cfg.sandbox,
-        "delivers": cfg.delivers,
-        "label": cfg.mode_label,
-        "real_send_blocked": cfg.real_send_blocked,
-    }
+    """Report the active email mode + available destinations for the UI."""
+    return build_send_mode_view()
 
 
 @router.post("/batch/{batch_id}/drafts")
@@ -115,15 +113,34 @@ def _find(drafts: list[EmailDraft], draft_id: str) -> EmailDraft:
     raise HTTPException(status_code=404, detail="Draft not found.")
 
 
+class SendDestination(BaseModel):
+    """The chosen send destination for this request.
+
+    ``kind`` is one of the destinations the current app mode permits (see
+    ``/email/mode``). ``replace_to`` is the address ALL recipients are diverted
+    to for test-mode destinations; it must belong to an allowed domain. The
+    server re-validates everything via ``resolve_send_plan`` — this body is only
+    a request, never trusted.
+    """
+
+    kind: str
+    replace_to: str | None = None
+
+
 class SendRequest(BaseModel):
     """Optional body for the send endpoint.
 
     When ``draft_ids`` is provided, only those drafts are sent (used to send a
     user-selected subset — e.g. excluding drafts whose documents failed to
     upload to the Portal). When omitted, all sendable drafts are sent.
+
+    ``destination`` selects where the emails go (Mailpit / SendGrid sandbox /
+    SendGrid to a coneva address / SendGrid live). Required in the UI; if
+    omitted the server picks a safe default for the current mode.
     """
 
     draft_ids: list[str] | None = None
+    destination: SendDestination | None = None
 
 
 @router.get("/batch/{batch_id}/drafts/{draft_id}/preview", response_class=HTMLResponse)
@@ -195,36 +212,92 @@ def patch_draft(
     return draft.model_dump()
 
 
+def _test_mode_annotate(
+    subject: str, html: str, orig_to: list[str], orig_cc: list[str]
+) -> tuple[str, str]:
+    """Prefix the subject and inject a banner listing the intended recipients.
+
+    Applied only in Test Mode so the diverted test email shows who it *would*
+    have gone to. Production emails are never modified by this.
+    """
+    intended = ", ".join(orig_to + orig_cc) or "—"
+    new_subject = f"[TEST \u2192 {intended}] {subject}"
+    banner = (
+        '<div style="margin:0 0 16px;padding:12px 16px;border:2px solid #b91c1c;'
+        "background:#fef2f2;color:#991b1b;font-family:Arial,Helvetica,sans-serif;"
+        'font-size:13px;">'
+        "<strong>TEST MODE</strong> \u2014 this email was diverted to a test "
+        f"address. Intended recipient(s): {intended}. Real recipients did not "
+        "receive it.</div>"
+    )
+    lower = html.lower()
+    idx = lower.find("<body")
+    if idx != -1:
+        end = html.find(">", idx)
+        if end != -1:
+            return new_subject, html[: end + 1] + banner + html[end + 1 :]
+    return new_subject, banner + html
+
+
 @router.post("/batch/{batch_id}/drafts/send")
 def send_drafts(
     batch_id: str,
     payload: SendRequest | None = None,
     _: dict = Depends(require_admin),
 ) -> dict:
-    """Send sendable drafts via the configured backend.
+    """Send selected drafts to the chosen destination.
 
-    If ``payload.draft_ids`` is provided, only those drafts are considered for
-    sending (others are skipped). This lets the UI send a user-selected subset —
-    by default only drafts whose documents uploaded to the Portal successfully.
+    Safety is centralised in ``resolve_send_plan`` (the single authority): it
+    validates the requested destination against the app mode (``EMAIL_MODE``)
+    and, for test destinations, requires + domain-checks the replacement
+    address. If the plan is not OK the whole send is refused (HTTP 400) and
+    nothing is sent (fail-closed).
+
+    When the plan carries a ``replace_to`` address, EVERY recipient (To/Cc/Bcc)
+    of EVERY email is replaced with it — enforced here, the single point where
+    the ``OutboundEmail`` is built, so no transport or UI path can bypass it —
+    and the email is annotated with the intended recipient for verification.
     """
     drafts = _load_drafts(batch_id)
     store = get_store()
-    sender = get_sender()
 
     selected_ids: set[str] | None = (
         set(payload.draft_ids) if payload and payload.draft_ids is not None else None
     )
 
-    # Resolve + log the active send mode so it's never a surprise which
-    # transport ran (and whether anything was actually delivered).
-    cfg = resolve_email_config()
+    # --- Resolve + validate the send plan (the single guardrail authority) ---
+    dest = payload.destination if payload else None
+    plan = resolve_send_plan(
+        kind=dest.kind if dest else None,
+        replace_to=dest.replace_to if dest else None,
+    )
+    if not plan.ok:
+        # Fail-closed: refuse the entire send. Nothing is sent.
+        raise HTTPException(status_code=400, detail=plan.error)
+
+    bcc = resolve_bcc()
+    try:
+        sender = build_sender(plan.backend, sandbox=plan.sandbox)
+    except EmailSenderConfigError as exc:
+        # Missing/invalid transport config (e.g. no SendGrid API key). Refuse
+        # cleanly rather than surfacing a raw 500.
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 - any other transport setup failure
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not initialise the email transport: {exc}",
+        )
+
     _log.warning(
-        "Email send for batch %s: backend=%s sandbox=%s delivers=%s (%s)",
+        "Email send for batch %s: mode=%s destination=%s backend=%s sandbox=%s "
+        "replace_to=%s delivers_real=%s",
         batch_id,
-        cfg.backend,
-        cfg.sandbox,
-        cfg.delivers,
-        cfg.mode_label,
+        resolve_app_mode(),
+        plan.kind,
+        plan.backend,
+        plan.sandbox,
+        plan.replace_to or "-",
+        plan.delivers_real,
     )
 
     results: list[dict] = []
@@ -233,11 +306,16 @@ def send_drafts(
         if selected_ids is not None and draft.draft_id not in selected_ids:
             continue
         if draft.status is DraftStatus.SENT:
-            results.append(
-                {"draft_id": draft.draft_id, "sent": True, "status": "SENT",
-                 "detail": "Already sent."}
-            )
-            continue
+            # Blanket send (no explicit selection) never re-sends already-sent
+            # drafts, to avoid accidental duplicate customer mail. A resend must
+            # be explicit: the caller lists the SENT draft's id in draft_ids.
+            if selected_ids is None:
+                results.append(
+                    {"draft_id": draft.draft_id, "sent": True, "status": "SENT",
+                     "detail": "Already sent."}
+                )
+                continue
+            # else: fall through and re-send this explicitly-selected draft.
         if not draft.to:
             draft.status = DraftStatus.BLOCKED
             results.append(
@@ -267,12 +345,29 @@ def send_drafts(
             )
             continue
 
+        # Build the final recipients + content from the validated plan. When the
+        # plan replaces recipients, ALL of To/Cc/Bcc become the single test
+        # address and the email is annotated with the intended recipient.
+        if plan.replace_to is not None:
+            out_to = [plan.replace_to]
+            out_cc: list[str] = []
+            out_bcc: list[str] = []
+            subject, html = _test_mode_annotate(
+                draft.subject, draft.html, draft.to, draft.cc
+            )
+        else:
+            out_to = draft.to
+            out_cc = draft.cc
+            out_bcc = bcc
+            subject, html = draft.subject, draft.html
+
         outbound = OutboundEmail(
             draft_id=draft.draft_id,
-            to=draft.to,
-            cc=draft.cc,
-            subject=draft.subject,
-            html=draft.html,
+            to=out_to,
+            cc=out_cc,
+            bcc=out_bcc,
+            subject=subject,
+            html=html,
             attachments=attachments,
         )
         res = sender.send(outbound)
@@ -286,13 +381,14 @@ def send_drafts(
         "sent": sum(1 for r in results if r["sent"]),
         "failed": sum(1 for r in results if not r["sent"]),
         "results": results,
-        # Active send mode so the UI can show exactly what happened.
+        # What actually happened, for the UI.
         "mode": {
-            "app_env": cfg.app_env,
-            "backend": cfg.backend,
-            "sandbox": cfg.sandbox,
-            "delivers": cfg.delivers,
-            "label": cfg.mode_label,
-            "real_send_blocked": cfg.real_send_blocked,
+            "app_mode": resolve_app_mode(),
+            "destination": plan.kind,
+            "backend": plan.backend,
+            "sandbox": plan.sandbox,
+            "replaced_to": plan.replace_to,
+            "delivers_real": plan.delivers_real,
+            "bcc": [] if plan.replace_to is not None else bcc,
         },
     }

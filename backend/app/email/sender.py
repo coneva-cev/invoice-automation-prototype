@@ -20,9 +20,28 @@ from typing import Protocol
 from .config import resolve_email_config
 from .models import DraftStatus, OutboundEmail, SendResult
 
+# Default address customers reply to. Overridable via EMAIL_REPLY_TO; set empty
+# to disable a Reply-To header.
+_DEFAULT_REPLY_TO = "service@conevasupport.com"
+
+
+def _reply_to() -> str | None:
+    """The Reply-To address for outgoing SendGrid mail (default support inbox)."""
+    value = os.environ.get("EMAIL_REPLY_TO", _DEFAULT_REPLY_TO).strip()
+    return value or None
+
 
 class EmailSender(Protocol):
     def send(self, email: OutboundEmail) -> SendResult: ...
+
+
+class EmailSenderConfigError(RuntimeError):
+    """The requested email transport could not be constructed (misconfigured).
+
+    Raised by ``build_sender`` when required configuration is missing (e.g. no
+    SendGrid API key). The send route maps this to a clear 4xx rather than a
+    raw 500.
+    """
 
 
 def _build_eml(email: OutboundEmail, sender_from: str) -> bytes:
@@ -90,6 +109,7 @@ def _make_sender() -> EmailSender:
             api_key=os.environ["SENDGRID_API_KEY"],
             sender_from=sender_from,
             sandbox=cfg.sandbox,
+            reply_to=_reply_to(),
         )
     if cfg.backend == "smtp":
         from .smtp_backend import SmtpSender
@@ -114,6 +134,53 @@ def get_sender() -> EmailSender:
     if _sender is None:
         _sender = _make_sender()
     return _sender
+
+
+def build_sender(backend: str, *, sandbox: bool = False) -> EmailSender:
+    """Build a transport for an explicit backend + sandbox, ignoring env defaults.
+
+    Used by the send path to honour a per-send destination chosen in the UI
+    (Mailpit / SendGrid sandbox / SendGrid live). Never mutates the cached
+    default sender. If ``EMAIL_BACKEND`` is set to ``console`` (tests), the
+    console sender is used regardless so unit tests can capture output without
+    a real transport.
+    """
+    sender_from = os.environ.get("EMAIL_FROM", "coneva <noreply@coneva.com>")
+
+    # Tests force the console backend to capture what would be sent. Return the
+    # cached singleton so recorded sends accumulate on the instance tests read.
+    if (os.environ.get("EMAIL_BACKEND") or "").strip().lower() == "console":
+        return get_sender()
+
+    if backend == "sendgrid":
+        from .sendgrid_backend import SendGridSender
+
+        api_key = (os.environ.get("SENDGRID_API_KEY") or "").strip()
+        if not api_key:
+            raise EmailSenderConfigError(
+                "SendGrid is not configured: SENDGRID_API_KEY is not set."
+            )
+        return SendGridSender(
+            api_key=api_key,
+            sender_from=sender_from,
+            sandbox=sandbox,
+            reply_to=_reply_to(),
+        )
+    if backend == "smtp":
+        from .smtp_backend import SmtpSender
+
+        return SmtpSender(
+            host=os.environ.get("SMTP_HOST", "localhost"),
+            port=int(os.environ.get("SMTP_PORT", "1025")),
+            sender_from=sender_from,
+            username=os.environ.get("SMTP_USERNAME") or None,
+            password=os.environ.get("SMTP_PASSWORD") or None,
+            use_starttls=os.environ.get("SMTP_STARTTLS", "false").lower() == "true",
+        )
+    return ConsoleSender(
+        sender_from=sender_from,
+        outbox_dir=os.environ.get("EMAIL_OUTBOX_DIR"),
+    )
 
 
 def reset_sender() -> None:
