@@ -77,6 +77,80 @@ function isError(status: string): boolean {
   return status.toUpperCase().startsWith('ERROR');
 }
 
+// Strip any uploaded-folder prefix from a filename for display.
+function basename(path: string): string {
+  return path.replace(/\\/g, '/').split('/').pop() ?? path;
+}
+
+// --- Document -> customer/MaLo ("tenant") mapping --------------------------
+// The Portal is a single multi-tenant endpoint; it resolves each PDF to a
+// tenant server-side from the MaLo inside the document. The app therefore has
+// no real tenant id — the closest identifier is the recipient (customer) and
+// its MaLo from the Excel mapping, which is what the Portal keys on.
+interface DocInfo {
+  customer: string | null;
+  malo: string | null;
+  matched: boolean;
+}
+
+const docInfoByFilename = computed<Record<string, DocInfo>>(() => {
+  const map: Record<string, DocInfo> = {};
+  for (const d of props.result.documents) {
+    map[d.filename] = {
+      customer: d.recipient?.unternehmen ?? d.fields.customer_name ?? null,
+      malo: (d.fields.marktlokation as string | null) ?? null,
+      matched: !!d.recipient?.matched,
+    };
+  }
+  return map;
+});
+
+const UNMATCHED_KEY = '__unmatched__';
+
+// A group of documents that resolve to the same customer ("tenant").
+interface TenantGroup<TDoc> {
+  key: string;
+  customer: string | null; // null => unmatched (no tenant)
+  malos: string[];
+  docs: TDoc[];
+}
+
+function groupByTenant<TDoc extends { filename: string }>(
+  docs: TDoc[],
+): TenantGroup<TDoc>[] {
+  const groups = new Map<string, TenantGroup<TDoc>>();
+  for (const doc of docs) {
+    const info = docInfoByFilename.value[doc.filename];
+    const matched = info?.matched ?? false;
+    const customer = info?.customer ?? null;
+    const key = matched && customer ? customer : UNMATCHED_KEY;
+    let g = groups.get(key);
+    if (!g) {
+      g = { key, customer: key === UNMATCHED_KEY ? null : customer, malos: [], docs: [] };
+      groups.set(key, g);
+    }
+    if (info?.malo && !g.malos.includes(info.malo)) g.malos.push(info.malo);
+    g.docs.push(doc);
+  }
+  return [...groups.values()];
+}
+
+// --- Plan (before upload): which documents go to which customer/tenant -----
+// Mirrors what the backend will send: matched documents by default, plus the
+// unmatched ones only when the user opted to include them.
+const plannedGroups = computed<TenantGroup<{ filename: string }>[]>(() => {
+  const docs = props.result.documents
+    .filter((d) => includeUnmatched.value || d.recipient?.matched)
+    .map((d) => ({ filename: d.filename }));
+  const groups = groupByTenant(docs);
+  // Named customers first (alphabetical), the "unmatched" bucket last.
+  return groups.sort((a, b) => {
+    if (a.customer === null) return 1;
+    if (b.customer === null) return -1;
+    return a.customer.localeCompare(b.customer);
+  });
+});
+
 // Rows enriched from the process result, joined on PDF filename, error-first.
 interface ResultRow {
   filename: string;
@@ -99,6 +173,38 @@ const rows = computed<ResultRow[]>(() => {
     return a.filename.localeCompare(b.filename);
   });
 });
+
+// --- Results (after upload): grouped by customer/tenant with per-doc status -
+const resultGroups = computed<TenantGroup<ResultRow>[]>(() => {
+  if (!uploadResult.value) return [];
+  const groups = groupByTenant(rows.value);
+  // Sort docs within a group error-first, then by filename.
+  for (const g of groups) {
+    g.docs.sort((a, b) => {
+      if (a.error !== b.error) return a.error ? -1 : 1;
+      return a.filename.localeCompare(b.filename);
+    });
+  }
+  // Groups with any error first, then unmatched-last, then alphabetical.
+  return groups.sort((a, b) => {
+    const aErr = a.docs.some((d) => d.error);
+    const bErr = b.docs.some((d) => d.error);
+    if (aErr !== bErr) return aErr ? -1 : 1;
+    if (a.customer === null) return 1;
+    if (b.customer === null) return -1;
+    return (a.customer ?? '').localeCompare(b.customer ?? '');
+  });
+});
+
+function groupOkCount(g: TenantGroup<ResultRow>): number {
+  return g.docs.filter((d) => !d.error).length;
+}
+function groupErrorCount(g: TenantGroup<ResultRow>): number {
+  return g.docs.filter((d) => d.error).length;
+}
+function groupLabel(g: TenantGroup<{ filename: string }>): string {
+  return g.customer ?? 'Unmatched — no tenant';
+}
 
 const okCount = computed(() => rows.value.filter((r) => !r.error).length);
 const errorCount = computed(() => rows.value.filter((r) => r.error).length);
@@ -249,7 +355,64 @@ function uploadAgain() {
       </div>
     </section>
 
-    <!-- Results table (error-first, errors highlighted) -->
+    <!-- Planned upload (before upload): documents grouped by customer/tenant -->
+    <section v-if="!uploadResult" class="space-y-3">
+      <div>
+        <h3 class="text-sm font-semibold">
+          Planned upload — documents by customer (tenant)
+        </h3>
+        <p class="text-xs text-muted-foreground">
+          Grouped by the customer / MaLo the Portal resolves the tenant from.
+          The Portal derives the actual tenant from each document's MaLo on
+          upload.
+        </p>
+      </div>
+
+      <p
+        v-if="plannedGroups.length === 0"
+        class="text-sm text-muted-foreground"
+      >
+        No documents to upload.
+      </p>
+
+      <Table v-else>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Customer</TableHead>
+            <TableHead>Documents</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <TableRow
+            v-for="g in plannedGroups"
+            :key="g.key"
+            :class="g.customer === null ? 'bg-destructive/5' : ''"
+          >
+            <TableCell class="align-top">
+              <div
+                class="text-sm font-medium"
+                :class="g.customer === null ? 'text-destructive' : ''"
+              >
+                {{ groupLabel(g) }}
+              </div>
+              <div v-if="g.malos.length" class="mt-1 text-xs text-muted-foreground">
+                MaLo: {{ g.malos.join(', ') }}
+              </div>
+              <div class="text-xs text-muted-foreground">
+                {{ g.docs.length }} doc(s)
+              </div>
+            </TableCell>
+            <TableCell class="text-xs">
+              <div v-for="d in g.docs" :key="d.filename">
+                {{ basename(d.filename) }}
+              </div>
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
+    </section>
+
+    <!-- Results (after upload): grouped by customer/tenant, errors highlighted -->
     <section v-if="uploadResult" class="space-y-3">
       <div class="flex flex-wrap items-center gap-2">
         <Badge variant="outline">{{ rows.length }} documents</Badge>
@@ -259,33 +422,66 @@ function uploadAgain() {
         </Badge>
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Status</TableHead>
-            <TableHead>File</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <TableRow
-            v-for="row in rows"
-            :key="row.filename"
-            :class="row.error ? 'bg-destructive/10' : ''"
+      <p class="text-xs text-muted-foreground">
+        Grouped by the customer / MaLo the Portal resolves the tenant from.
+      </p>
+
+      <div
+        v-for="g in resultGroups"
+        :key="g.key"
+        class="space-y-1 rounded-md border"
+      >
+        <div
+          class="flex flex-wrap items-center gap-2 border-b bg-muted/30 px-3 py-2"
+        >
+          <span
+            class="text-sm font-medium"
+            :class="g.customer === null ? 'text-destructive' : ''"
           >
-            <TableCell>
-              <Badge :variant="row.error ? 'destructive' : 'secondary'">
-                {{ row.error ? 'ERROR' : 'OK' }}
-              </Badge>
-            </TableCell>
-            <TableCell class="text-xs">
-              {{ row.filename }}
-              <div v-if="row.error" class="text-destructive">
-                {{ row.status }}
-              </div>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
+            {{ groupLabel(g) }}
+          </span>
+          <Badge v-if="g.malos.length" variant="outline" class="text-[10px]">
+            MaLo: {{ g.malos.join(', ') }}
+          </Badge>
+          <Badge variant="secondary" class="text-[10px]">
+            {{ groupOkCount(g) }} OK
+          </Badge>
+          <Badge
+            v-if="groupErrorCount(g)"
+            variant="destructive"
+            class="text-[10px]"
+          >
+            {{ groupErrorCount(g) }} error(s)
+          </Badge>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Status</TableHead>
+              <TableHead>File</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow
+              v-for="row in g.docs"
+              :key="row.filename"
+              :class="row.error ? 'bg-destructive/10' : ''"
+            >
+              <TableCell>
+                <Badge :variant="row.error ? 'destructive' : 'secondary'">
+                  {{ row.error ? 'ERROR' : 'OK' }}
+                </Badge>
+              </TableCell>
+              <TableCell class="text-xs">
+                {{ basename(row.filename) }}
+                <div v-if="row.error" class="text-destructive">
+                  {{ row.status }}
+                </div>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
     </section>
 
     <!-- Download bundle (kept as an escape hatch / manual upload) -->
