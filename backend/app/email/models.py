@@ -78,6 +78,7 @@ class OutboundEmail(BaseModel):
     draft_id: str
     to: list[str]
     cc: list[str]
+    bcc: list[str] = Field(default_factory=list)
     subject: str
     html: str
     attachments: list[EmailAttachment] = Field(default_factory=list)

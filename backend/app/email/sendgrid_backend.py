@@ -25,15 +25,25 @@ _SENDGRID_URL = "https://api.sendgrid.com/v3/mail/send"
 
 
 class SendGridSender:
-    def __init__(self, api_key: str, sender_from: str, sandbox: bool = False):
+    def __init__(
+        self,
+        api_key: str,
+        sender_from: str,
+        sandbox: bool = False,
+        reply_to: str | None = None,
+    ):
         self.api_key = api_key
         self.sender_name, self.sender_email = parseaddr(sender_from)
         self.sandbox = sandbox
+        # Address customers reply to (e.g. support inbox), if configured.
+        _, self.reply_to_email = parseaddr(reply_to or "")
 
     def _payload(self, email: OutboundEmail) -> dict:
         personalization: dict = {"to": [{"email": e} for e in email.to]}
         if email.cc:
             personalization["cc"] = [{"email": e} for e in email.cc]
+        if email.bcc:
+            personalization["bcc"] = [{"email": e} for e in email.bcc]
 
         payload: dict = {
             "personalizations": [personalization],
@@ -41,6 +51,8 @@ class SendGridSender:
             "subject": email.subject,
             "content": [{"type": "text/html", "value": email.html}],
         }
+        if self.reply_to_email:
+            payload["reply_to"] = {"email": self.reply_to_email}
         if email.attachments:
             payload["attachments"] = [
                 {

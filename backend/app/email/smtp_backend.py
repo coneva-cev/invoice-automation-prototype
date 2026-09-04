@@ -43,7 +43,9 @@ class SmtpSender:
         from .sender import _build_eml
 
         message = _build_eml(email, self.sender_from)
-        recipients = list(email.to) + list(email.cc)
+        # BCC is delivered by adding it to the envelope recipients only — never
+        # to the message headers, so other recipients can't see it.
+        recipients = list(email.to) + list(email.cc) + list(email.bcc)
         try:
             with smtplib.SMTP(self.host, self.port, timeout=30) as smtp:
                 if self.use_starttls:
