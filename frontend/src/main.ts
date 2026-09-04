@@ -15,6 +15,11 @@ app.use(
     authorizationParams: {
       redirect_uri: window.location.origin,
       audience: import.meta.env.VITE_AUTH0_AUDIENCE,
+      // `offline_access` is required for Auth0 to issue a refresh token; without
+      // it, `useRefreshTokens` has nothing to refresh with and
+      // getAccessTokenSilently() throws "Missing Refresh Token" once the cached
+      // access token needs renewal (e.g. after an idle period on the page).
+      scope: 'openid profile email offline_access',
     },
     // Persist tokens across page refreshes (default is in-memory, which loses
     // the session on every reload) and enable silent refresh via refresh tokens
