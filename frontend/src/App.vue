@@ -36,7 +36,10 @@ onMounted(checkBackend);
     <!-- Top navigation bar -->
     <nav class="border-b border-border bg-background/80 backdrop-blur-sm sticky top-0 z-10">
       <div class="mx-auto max-w-screen-2xl px-6 lg:px-10 h-14 flex items-center justify-between">
-        <span class="font-semibold text-sm tracking-tight">Invoice Automation</span>
+        <div class="flex items-center gap-3">
+          <img src="/coneva-logo.png" alt="coneva" class="h-6 w-auto" />
+          <span class="font-semibold text-sm tracking-tight">Invoice Automation</span>
+        </div>
 
         <div class="flex items-center gap-4">
           <!-- Backend status indicator -->
