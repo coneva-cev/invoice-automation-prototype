@@ -33,10 +33,10 @@ const hasMismatches = computed(() => mismatchCount.value > 0);
 const matches = computed(() => matchedEmails.value);
 const hasMatches = computed(() => matches.value.length > 0);
 
-// Default to the mismatches tab when there's something to resolve; otherwise
-// show the matches when there are any.
-const tab = ref<'matches' | 'documents' | 'emails' | 'mismatches'>(
-  hasMismatches.value ? 'mismatches' : hasMatches.value ? 'matches' : 'documents',
+// Default to the combined "All" view: matched groups first, then unmatched
+// grouped by reason. The other tabs act as filters to refine the view.
+const tab = ref<'all' | 'matches' | 'documents' | 'emails' | 'mismatches'>(
+  'all',
 );
 
 function categoryVariant(cat: string) {
@@ -48,6 +48,10 @@ function money(v: unknown) {
   return typeof v === 'number'
     ? v.toLocaleString('de-DE', { minimumFractionDigits: 2 }) + ' €'
     : '—';
+}
+// Strip any uploaded-folder prefix from a filename for display.
+function basename(path: string): string {
+  return path.replace(/\\/g, '/').split('/').pop() ?? path;
 }
 </script>
 
@@ -101,8 +105,19 @@ function money(v: unknown) {
       </Badge>
     </div>
 
-    <!-- Tabs -->
+    <!-- Tabs (filters) -->
     <div class="flex gap-2 border-b">
+      <button
+        class="px-3 py-2 text-sm font-medium -mb-px border-b-2"
+        :class="
+          tab === 'all'
+            ? 'border-primary text-foreground'
+            : 'border-transparent text-muted-foreground'
+        "
+        @click="tab = 'all'"
+      >
+        All
+      </button>
       <button
         v-if="hasMatches"
         class="flex items-center gap-1.5 px-3 py-2 text-sm font-medium -mb-px border-b-2"
@@ -118,6 +133,21 @@ function money(v: unknown) {
           class="text-[10px] border-transparent bg-green-600 text-white"
         >
           {{ matches.length }}
+        </Badge>
+      </button>
+      <button
+        v-if="hasMismatches"
+        class="flex items-center gap-1.5 px-3 py-2 text-sm font-medium -mb-px border-b-2"
+        :class="
+          tab === 'mismatches'
+            ? 'border-destructive text-destructive'
+            : 'border-transparent text-destructive/70'
+        "
+        @click="tab = 'mismatches'"
+      >
+        Mismatches
+        <Badge variant="destructive" class="text-[10px]">
+          {{ mismatchCount }}
         </Badge>
       </button>
       <button
@@ -142,25 +172,127 @@ function money(v: unknown) {
       >
         Emails ({{ matchedEmails.length }})
       </button>
-      <button
-        v-if="hasMismatches"
-        class="flex items-center gap-1.5 px-3 py-2 text-sm font-medium -mb-px border-b-2"
-        :class="
-          tab === 'mismatches'
-            ? 'border-destructive text-destructive'
-            : 'border-transparent text-destructive/70'
-        "
-        @click="tab = 'mismatches'"
+    </div>
+
+    <!-- ================= Combined "All" view ================= -->
+    <div v-if="tab === 'all'" class="space-y-6">
+      <p
+        v-if="!hasMatches && !hasMismatches"
+        class="text-sm text-muted-foreground"
       >
-        Mismatches
-        <Badge variant="destructive" class="text-[10px]">
-          {{ mismatchCount }}
-        </Badge>
-      </button>
+        No results to show.
+      </p>
+
+      <!-- Matched group -->
+      <div v-if="hasMatches" class="space-y-2">
+        <div class="flex items-center gap-2">
+          <span
+            class="inline-block h-2.5 w-2.5 rounded-full bg-green-600"
+            aria-hidden="true"
+          />
+          <h3 class="text-sm font-semibold text-green-700 dark:text-green-500">
+            Matched ({{ matches.length }})
+          </h3>
+        </div>
+        <p class="text-xs text-muted-foreground">
+          Documents successfully matched to a recipient from the Excel mapping.
+        </p>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Customer</TableHead>
+              <TableHead>TO</TableHead>
+              <TableHead>CC</TableHead>
+              <TableHead>MaLos</TableHead>
+              <TableHead>Documents</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow
+              v-for="(e, i) in matches"
+              :key="i"
+              class="bg-green-500/10"
+            >
+              <TableCell class="font-medium">{{ e.unternehmen ?? '—' }}</TableCell>
+              <TableCell class="text-xs">{{ e.to.join(', ') || '—' }}</TableCell>
+              <TableCell class="text-xs">{{ e.cc.join(', ') || '—' }}</TableCell>
+              <TableCell class="text-xs">{{ e.malos.join(', ') || '—' }}</TableCell>
+              <TableCell class="text-xs">
+                <div v-for="doc in e.documents" :key="doc">{{ doc }}</div>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
+
+      <!-- Unmatched group (sub-grouped by reason) -->
+      <div v-if="hasMismatches" class="space-y-4">
+        <div class="flex items-center gap-2">
+          <span
+            class="inline-block h-2.5 w-2.5 rounded-full bg-destructive"
+            aria-hidden="true"
+          />
+          <h3 class="text-sm font-semibold text-destructive">
+            Unmatched ({{ mismatchCount }})
+          </h3>
+        </div>
+
+        <div v-if="pdfsWithoutRecipient.length" class="space-y-1">
+          <p class="text-xs font-medium text-destructive">
+            PDFs without a mapped recipient ({{ pdfsWithoutRecipient.length }})
+          </p>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>File</TableHead>
+                <TableHead>Customer</TableHead>
+                <TableHead>MaLo</TableHead>
+                <TableHead>Reason</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="d in pdfsWithoutRecipient" :key="d.filename">
+                <TableCell class="text-xs">{{ d.filename }}</TableCell>
+                <TableCell>{{ d.fields.customer_name ?? '—' }}</TableCell>
+                <TableCell class="text-xs">
+                  {{ d.fields.marktlokation ?? '—' }}
+                </TableCell>
+                <TableCell class="text-xs text-muted-foreground">
+                  {{ d.recipient?.warnings.join('; ') || 'No mapping entry' }}
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+
+        <div v-if="recipientsWithoutPdf.length" class="space-y-1">
+          <p class="text-xs font-medium text-destructive">
+            Recipients without a PDF ({{ recipientsWithoutPdf.length }})
+          </p>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Customer</TableHead>
+                <TableHead>Kundennr.</TableHead>
+                <TableHead>MaLos</TableHead>
+                <TableHead>Email</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="(o, i) in recipientsWithoutPdf" :key="i">
+                <TableCell>{{ o.unternehmen ?? '—' }}</TableCell>
+                <TableCell class="text-xs">{{ o.kundennummer ?? '—' }}</TableCell>
+                <TableCell class="text-xs">{{ o.malos.join(', ') }}</TableCell>
+                <TableCell class="text-xs">{{ o.to.join(', ') || '—' }}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+      </div>
     </div>
 
     <!-- Matches table (document ↔ Excel recipient matched) -->
-    <div v-if="tab === 'matches'" class="space-y-2">
+    <div v-else-if="tab === 'matches'" class="space-y-2">
       <p class="text-xs font-medium text-green-700 dark:text-green-500">
         Documents successfully matched to a recipient from the Excel mapping
         ({{ matches.length }})
@@ -197,6 +329,7 @@ function money(v: unknown) {
     <Table v-else-if="tab === 'documents'">
       <TableHeader>
         <TableRow>
+          <TableHead>File</TableHead>
           <TableHead>Category</TableHead>
           <TableHead>Subtype</TableHead>
           <TableHead>Rechnungsnr.</TableHead>
@@ -208,6 +341,7 @@ function money(v: unknown) {
       </TableHeader>
       <TableBody>
         <TableRow v-for="d in result.documents" :key="d.filename">
+          <TableCell class="text-xs">{{ basename(d.filename) }}</TableCell>
           <TableCell>
             <Badge :variant="categoryVariant(d.category)">
               {{ d.category }}
